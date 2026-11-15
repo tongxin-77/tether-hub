@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tether Hub 瑞士</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* 04 瑞士：国际主义海报式排版。白底纯黑，严格 12 栏网格，粗黑规线分隔；
+   红色只出现在“需要你动手”的地方——等待确认的整块红色海报区、拒绝/断线事件。 */
+:root {
+  --white: #ffffff; --black: #000000; --red: #e4002b; --grey: #ececea; --mid: #6b6b6b; --soft: #b8b8b4;
+  --f: "Archivo", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --f-mono: "Roboto Mono", "Cascadia Mono", Consolas, monospace;
+  --g: 28px;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { min-height: 100vh; background: var(--white); color: var(--black); font: 15px/1.5 var(--f); font-variation-settings: "wdth" 100; }
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+:focus-visible { outline: 3px solid var(--red); outline-offset: 2px; }
+.btn { font-weight: 700; padding: 9px 16px; background: var(--black); color: var(--white); white-space: nowrap; }
+.btn:hover { background: var(--red); }
+.btn.line { background: none; color: var(--black); box-shadow: inset 0 0 0 2px var(--black); }
+.btn.line:hover { background: var(--black); color: var(--white); }
+.btn.inv { background: var(--white); color: var(--red); }
+.btn.inv:hover { background: var(--black); color: var(--white); }
+
+.proto { position: fixed; right: 0; bottom: 0; z-index: 50; display: flex; background: var(--black); }
+.proto button { color: var(--soft); font-size: 13px; font-weight: 600; padding: 8px 12px; }
+.proto button[aria-current="page"] { color: var(--white); background: var(--red); }
+
+.grid { display: grid; grid-template-columns: repeat(12, minmax(0,1fr)); column-gap: var(--g); padding: 0 40px; }
+
+/* ===== 登录 ===== */
+.login { min-height: 100vh; align-content: stretch; }
+.login .poster { grid-column: 1 / 8; padding: 48px 0; display: flex; flex-direction: column; justify-content: space-between; border-right: 2px solid var(--black); padding-right: var(--g); }
+.poster h1 { margin: 0; font-size: clamp(64px, 11vw, 168px); line-height: .86; font-weight: 900; font-variation-settings: "wdth" 70; letter-spacing: -.02em; }
+.poster p { margin: 0; font-size: 18px; max-width: 30em; }
+.login form { grid-column: 8 / 13; align-self: center; display: flex; flex-direction: column; gap: 18px; padding: 48px 0; }
+.login form h2 { margin: 0; font-size: 28px; font-weight: 800; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-weight: 700; font-size: 14px; }
+input { font: 18px var(--f); border: 0; border-bottom: 3px solid var(--black); padding: 10px 0; outline: none; background: none; }
+input:focus { border-bottom-color: var(--red); }
+.login .btn { padding: 14px; font-size: 17px; }
+.login small { color: var(--mid); }
+
+/* ===== 顶栏 ===== */
+.head { border-bottom: 3px solid var(--black); align-items: end; padding-top: 22px; padding-bottom: 14px; position: sticky; top: 0; background: var(--white); z-index: 5; }
+.head .word { grid-column: 1 / 4; font-weight: 900; font-size: 26px; line-height: 1; font-variation-settings: "wdth" 75; }
+.head nav { grid-column: 4 / 8; display: flex; gap: 24px; font-weight: 700; }
+.head nav button { padding: 0; color: var(--mid); }
+.head nav button[aria-current="page"] { color: var(--black); text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 6px; }
+.head .right { grid-column: 8 / 13; display: flex; justify-content: flex-end; align-items: center; gap: 22px; font-size: 14px; }
+.live { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.live i { width: 10px; height: 10px; background: var(--black); animation: tick 2s steps(1) infinite; }
+@keyframes tick { 50% { background: var(--soft); } }
+.head .right a { color: inherit; font-weight: 700; }
+
+/* 红色海报区：等待确认 */
+.alarm { background: var(--red); color: var(--white); padding-top: 36px; padding-bottom: 40px; }
+.alarm .k { grid-column: 1 / 4; font-weight: 700; font-size: 15px; padding-top: 10px; }
+.alarm .k b { display: block; font-size: 96px; line-height: .9; font-weight: 900; font-variation-settings: "wdth" 70; }
+.alarm .body { grid-column: 4 / 11; }
+.alarm h2 { margin: 0; font-size: clamp(36px, 5.2vw, 76px); line-height: .95; font-weight: 900; font-variation-settings: "wdth" 72; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.alarm p { margin: 14px 0 0; font-size: 18px; max-width: 34em; }
+.alarm .go { grid-column: 11 / 13; align-self: end; justify-self: end; }
+.alarm .btn { padding: 14px 22px; font-size: 17px; }
+
+.summary { border-bottom: 1px solid var(--black); padding-top: 18px; padding-bottom: 18px; }
+.summary div { grid-column: span 3; font-size: 14px; color: var(--mid); }
+.summary b { display: block; font-size: 40px; line-height: 1; font-weight: 800; color: var(--black); font-variation-settings: "wdth" 80; }
+
+.machine { border-bottom: 3px solid var(--black); padding-top: 26px; padding-bottom: 30px; }
+.m-side { grid-column: 1 / 4; }
+.m-side h2 { margin: 0 0 12px; font-size: 44px; line-height: .95; font-weight: 900; font-variation-settings: "wdth" 68; overflow-wrap: anywhere; position: sticky; top: 84px; }
+.m-side dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 14px; }
+.m-side dt { color: var(--mid); }
+.m-side dd { margin: 0; font-weight: 600; }
+.m-side .on { color: var(--black); } .m-side .off { color: var(--red); }
+.m-list { grid-column: 4 / 13; }
+.s { display: grid; grid-template-columns: minmax(0,2.2fr) minmax(0,2.4fr) minmax(0,1.3fr) minmax(0,1.3fr) 92px; column-gap: var(--g); padding: 14px 0; border-top: 1px solid var(--black); align-items: start; }
+.s:first-child { border-top: 2px solid var(--black); }
+.s.hd { border-top: 0; padding: 0 0 8px; font-size: 13px; color: var(--mid); font-weight: 600; }
+.s .nm { font-size: 20px; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; font-variation-settings: "wdth" 85; }
+.s .ssh { display: block; font: 12.5px var(--f-mono); margin-top: 4px; }
+.s .path { font: 13px/1.5 var(--f-mono); overflow-wrap: anywhere; }
+.s .path span { color: var(--mid); }
+.s .st { font-size: 14px; font-weight: 600; }
+.s .st > span { display: block; font-weight: 400; color: var(--mid); }
+.s .tm { font-size: 13px; color: var(--mid); }
+.s .tm b { color: var(--black); font-weight: 600; }
+.s .act { justify-self: end; }
+.s.wait .nm, .s.wait .st { color: var(--red); }
+.s.wait { box-shadow: inset 6px 0 0 var(--red); padding-left: 18px; margin-left: -18px; }
+.s.s-exited { color: var(--soft); }
+.s.s-exited .path span, .s.s-exited .tm, .s.s-exited .tm b, .s.s-exited .st > span { color: var(--soft); }
+.sq { display: inline-block; width: 9px; height: 9px; background: currentColor; margin-right: 6px; vertical-align: 1px; }
+.sq.ring { background: none; box-shadow: inset 0 0 0 2px currentColor; }
+.none { padding: 14px 0; border-top: 2px solid var(--black); color: var(--mid); font-size: 16px; }
+
+/* ===== 接管终端 ===== */
+.term-page { height: 100vh; display: grid; grid-template-rows: auto minmax(0,1fr); }
+.t-head { border-bottom: 3px solid var(--black); padding-top: 18px; padding-bottom: 14px; align-items: end; row-gap: 10px; }
+.t-head h2 { grid-column: 1 / 6; margin: 0; font-size: 40px; line-height: .95; font-weight: 900; font-variation-settings: "wdth" 70; overflow-wrap: anywhere; }
+.t-head h2 small { display: block; font-size: 14px; font-weight: 500; font-variation-settings: "wdth" 100; color: var(--mid); margin-top: 6px; }
+.t-head .now { grid-column: 6 / 9; font-size: 28px; font-weight: 900; font-variation-settings: "wdth" 75; line-height: 1; }
+body[data-tstate="active"] .t-head .now { color: var(--black); }
+body:not([data-tstate="active"]) .t-head .now { color: var(--red); }
+.t-head .now small { display: block; font-size: 13px; font-weight: 500; color: var(--mid); font-variation-settings: "wdth" 100; margin-top: 6px; line-height: 1.4; }
+.t-head .ctl { grid-column: 9 / 13; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.switch { display: flex; flex-wrap: wrap; justify-content: flex-end; font-size: 12px; }
+.switch button { padding: 3px 8px; color: var(--mid); box-shadow: inset 0 0 0 1px var(--soft); margin-left: -1px; }
+.switch button[aria-pressed="true"] { background: var(--black); color: var(--white); box-shadow: none; }
+.t-body { background: var(--black); padding: 18px 40px 22px; display: flex; min-height: 0; }
+.t-body pre { flex: 1; min-height: 0; margin: 0; overflow: auto; color: #f2f2f2; font: 13.5px/1.5 var(--f-mono); }
+.t-dim { color: #8a8a8a; } .t-acc { color: #ff4d6a; } .t-ok { color: #6fdc8c; } .t-warn { color: #ffd23f; } .t-err { color: #ff4d6a; } .t-blue { color: #7cc4ff; }
+.t-del { color: #ff4d6a; background: rgba(255,77,106,.12); } .t-ins { color: #6fdc8c; background: rgba(111,220,140,.12); }
+body:not([data-tstate="active"]) .t-body pre { opacity: .35; }
+
+/* ===== 审计 ===== */
+.a-top { padding-top: 30px; padding-bottom: 18px; align-items: end; }
+.a-top h1 { grid-column: 1 / 8; margin: 0; font-size: 72px; line-height: .9; font-weight: 900; font-variation-settings: "wdth" 68; }
+.a-top p { grid-column: 8 / 11; margin: 0; color: var(--mid); font-size: 14px; }
+.a-top .btn { grid-column: 11 / 13; justify-self: end; }
+.audit { padding: 0 40px 60px; overflow-x: auto; }
+.audit table { width: 100%; border-collapse: collapse; }
+.audit th { text-align: left; font-size: 13px; color: var(--mid); font-weight: 600; padding: 8px 14px 8px 0; border-bottom: 3px solid var(--black); }
+.audit td { padding: 12px 14px 12px 0; border-bottom: 1px solid var(--black); white-space: nowrap; }
+.audit .mono { font: 13px var(--f-mono); }
+.audit .ev { font-weight: 800; font-size: 16px; }
+.audit .bad .ev { color: var(--red); }
+
+@media (max-width: 900px) {
+  :root { --g: 16px; }
+  .grid { padding: 0 16px; }
+  .login .poster, .login form { grid-column: 1 / -1; border-right: 0; padding-right: 0; }
+  .login .poster { padding: 32px 0 20px; border-bottom: 3px solid var(--black); gap: 20px; }
+  .login form { padding: 24px 0 72px; }
+  .head { padding-top: 14px; row-gap: 12px; }
+  .head .word { grid-column: 1 / 7; font-size: 22px; }
+  .head .right { grid-column: 7 / 13; gap: 14px; }
+  .head nav { grid-column: 1 / -1; grid-row: 2; }
+  .alarm { padding-top: 22px; padding-bottom: 24px; row-gap: 14px; }
+  .alarm .k, .alarm .body, .alarm .go { grid-column: 1 / -1; }
+  .alarm .k { display: flex; align-items: baseline; gap: 10px; padding: 0; }
+  .alarm .k b { font-size: 56px; }
+  .alarm .go { justify-self: stretch; }
+  .alarm .btn { width: 100%; }
+  .summary div { grid-column: span 6; padding-bottom: 8px; }
+  .summary b { font-size: 30px; }
+  .m-side, .m-list { grid-column: 1 / -1; }
+  .m-side h2 { position: static; font-size: 36px; }
+  .m-side dl { margin-bottom: 14px; }
+  .s.hd { display: none; }
+  .s { grid-template-columns: minmax(0,1fr) auto; row-gap: 6px; }
+  .s .act { grid-column: 2; grid-row: 1; }
+  .s .path, .s .st, .s .tm { grid-column: 1 / -1; }
+  .s.wait { padding-left: 12px; margin-left: -12px; }
+  .term-page { height: 100dvh; padding-bottom: 36px; }
+  .t-head h2, .t-head .now, .t-head .ctl { grid-column: 1 / -1; }
+  .t-head h2 { font-size: 30px; }
+  .t-head .now { font-size: 22px; }
+  .t-head .ctl { flex-direction: row-reverse; justify-content: space-between; align-items: flex-start; }
+  .switch { justify-content: flex-start; }
+  .t-body { padding: 10px 12px; }
+  .t-body pre { font-size: 11px; }
+  .a-top { padding-top: 40px; }
+  .a-top h1 { grid-column: 1 / -1; font-size: 52px; line-height: 1.05; }
+  .a-top p { grid-column: 1 / 9; margin-top: 10px; }
+  .a-top .btn { grid-column: 9 / 13; }
+  .audit { padding: 0 16px 60px; }
+  .audit thead { display: none; }
+  .audit table, .audit tbody, .audit tr, .audit td { display: block; }
+  .audit tr { display: grid; grid-template-columns: 1fr auto; border-bottom: 1px solid var(--black); padding: 10px 0; gap: 2px 10px; }
+  .audit tr:first-child { border-top: 3px solid var(--black); }
+  .audit td { border: 0; padding: 0; white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<nav class="proto" aria-label="原型页面"><button data-go="login">登录</button><button data-go="main">主界面</button><button data-go="term">接管终端</button><button data-go="audit">审计</button></nav>
+
+<section class="view grid login" data-view="login">
+  <div class="poster"><h1>Tether<br>Hub</h1><p>所有机器上的终端会话，一页看完；需要时，从这里接管。</p></div>
+  <form data-login>
+    <h2>登录</h2>
+    <div class="field"><label for="pw">管理员密码</label><input id="pw" type="password" value="••••••••••"></div>
+    <button class="btn" type="submit">登录</button>
+    <small>仅限管理员本人。会话内容不经此页存储。</small>
+  </form>
+</section>
+
+<section class="view" data-view="main">
+  <header class="grid head">
+    <div class="word">Tether Hub</div>
+    <nav><button data-go="main">会话</button><button data-go="audit">审计</button></nav>
+    <div class="right"><span class="live" title="实时连接正常（SSE）"><i></i>实时</span><a href="#login" data-go="login">退出</a></div>
+  </header>
+  <div id="alarm"></div>
+  <div class="grid summary" id="summary"></div>
+  <div id="machines"></div>
+  <div style="height:60px"></div>
+</section>
+
+<section class="view term-page" data-view="term">
+  <header class="grid t-head">
+    <h2>tether-hub<small>DEV-PC · #3 · C:\workspace\tether-hub · claude</small></h2>
+    <div class="now"><span id="tstate"></span><small id="nn"></small></div>
+    <div class="ctl"><button class="btn" data-go="main">关闭</button>
+      <div class="switch" aria-label="原型：切换状态"><button data-tstate="active">接管中</button><button data-tstate="reclaimed">本地收回</button><button data-tstate="disabled">未允许</button><button data-tstate="exited">已退出</button><button data-tstate="offline">离线</button></div></div>
+  </header>
+  <div class="t-body"><pre id="term"></pre></div>
+</section>
+
+<section class="view" data-view="audit">
+  <header class="grid head">
+    <div class="word">Tether Hub</div>
+    <nav><button data-go="main">会话</button><button data-go="audit">审计</button></nav>
+    <div class="right"><span class="live"><i></i>实时</span><a href="#login" data-go="login">退出</a></div>
+  </header>
+  <div class="grid a-top"><h1>接管审计</h1><p>谁、何时、从哪个 IP 接管了哪个会话。按时间倒序。</p><button class="btn line">刷新</button></div>
+  <div class="audit"><table><thead><tr><th>时间</th><th>事件</th><th>机器</th><th>会话</th><th>来源 IP</th></tr></thead><tbody id="audit"></tbody></table></div>
+</section>
+
+<script>
+/* ===== 假数据与视图切换（各原型共用，构建时内联） ===== */
+const STATUS = { running: '运行中', waiting: '等待中', exited: '已退出' };
+const CLAUDE = { thinking: '思考中', waiting: '等待确认', background: '子代理运行中', done: '已完成' };
+const EVENT = { start: '开始接管', end: '结束接管', denied: '接管被拒绝', reclaimed: '被本地收回', disabled: '本机关闭接管', exited: '会话退出', disconnected: '机器断线' };
+const TSTATE = {
+  active: { label: '接管中', note: '你的键盘输入会直接发送到这台机器。' },
+  reclaimed: { label: '已被本地收回', note: '本机用户在 Tether 里收回了控制，此处不再接收输入。' },
+  disabled: { label: '本机未允许接管', note: '在这台机器的 Tether 设置 › 管理服务器 中打开「允许远程接管」后重试。' },
+  exited: { label: '会话已退出', note: '进程已结束，画面停在最后一帧。' },
+  offline: { label: '机器离线', note: 'DEV-PC 与服务器的连接已断开，恢复后可重新接管。' },
+};
+const MACHINES = [
+  { name: 'DEV-PC', version: '0.9.2', online: true, seen: '刚刚', token: 'dev-pc', sessions: [
+    { id: 3, name: 'tether-hub', cwd: 'C:\\workspace\\tether-hub', cmd: 'claude', status: 'running', claude: 'waiting', started: '今天 09:12', last: '刚刚', ask: 'Bash(pnpm test) 请求执行，等待你选择是否允许' },
+    { id: 5, name: 'tether', cwd: 'C:\\workspace\\tether', cmd: 'claude', status: 'running', claude: 'thinking', started: '今天 10:40', last: '12 秒前' },
+    { id: 7, name: 'pwsh', cwd: 'C:\\Users\\dev', cmd: 'pwsh.exe', status: 'running', claude: null, started: '今天 08:55', last: '6 分钟前' },
+  ] },
+  { name: 'BUILD-BOX', version: '0.9.2', online: true, seen: '刚刚', token: 'build-box', sessions: [
+    { id: 1, name: 'deploy', cwd: '/srv/tether-hub', cmd: 'ssh deploy@10.0.0.12', host: 'deploy@10.0.0.12', status: 'running', claude: 'background', started: '昨天 21:03', last: '40 秒前' },
+    { id: 2, name: 'infra-review', cwd: 'D:\\src\\infra', cmd: 'claude', status: 'running', claude: 'done', started: '今天 11:02', last: '3 分钟前' },
+    { id: 4, name: 'release-build', cwd: 'D:\\src\\infra', cmd: 'cargo build --release', status: 'waiting', claude: null, started: '今天 11:20', last: '1 分钟前' },
+    { id: 6, name: 'nightly', cwd: 'D:\\ci', cmd: 'pwsh.exe -File nightly.ps1', status: 'exited', claude: null, started: '今天 02:00', last: '今天 02:47' },
+  ] },
+  { name: 'LAPTOP-HOME', version: '0.9.1', online: false, seen: '昨天 22:41', token: 'laptop', sessions: [] },
+];
+const AUDIT = [
+  { time: '11-15 13:52:08', event: 'start', machine: 'DEV-PC', session: 'tether-hub #3', ip: '100.64.0.7' },
+  { time: '11-15 13:31:44', event: 'reclaimed', machine: 'DEV-PC', session: 'tether #5', ip: '100.64.0.7' },
+  { time: '11-15 13:20:10', event: 'start', machine: 'DEV-PC', session: 'tether #5', ip: '100.64.0.7' },
+  { time: '11-15 12:58:02', event: 'denied', machine: 'LAPTOP-HOME', session: 'notes #2', ip: '192.168.1.20' },
+  { time: '11-15 11:47:39', event: 'end', machine: 'BUILD-BOX', session: 'deploy #1', ip: '192.168.1.20' },
+  { time: '11-15 11:30:15', event: 'start', machine: 'BUILD-BOX', session: 'deploy #1', ip: '192.168.1.20' },
+  { time: '11-15 02:47:51', event: 'exited', machine: 'BUILD-BOX', session: 'nightly #6', ip: '' },
+  { time: '11-14 22:41:03', event: 'disconnected', machine: 'LAPTOP-HOME', session: 'notes #2', ip: '10.8.0.3' },
+  { time: '11-14 22:12:30', event: 'disabled', machine: 'LAPTOP-HOME', session: 'notes #2', ip: '10.8.0.3' },
+];
+const SUMMARY = (() => {
+  const on = MACHINES.filter(m => m.online).length;
+  const all = MACHINES.flatMap(m => m.sessions);
+  return { machines: MACHINES.length, online: on, sessions: all.filter(s => s.status !== 'exited').length,
+    waiting: all.filter(s => s.claude === 'waiting').length };
+})();
+const ATTN = MACHINES.flatMap(m => m.sessions.filter(s => s.claude === 'waiting').map(s => ({ m, s })));
+
+/* 权限确认框：按纯文本宽度补齐，保证右边框对齐 */
+const BOX = (() => {
+  const W = 54, rows = ["<b>Bash command</b>", "  pnpm test", "  <span class=\"t-dim\">Re-run unit tests after the fix</span>", "",
+    "Do you want to proceed?", "<span class=\"t-blue\">❯ 1. Yes</span>", "  2. Yes, and don't ask again for pnpm test", "  3. No, and tell Claude what to do differently"];
+  const plain = h => h.replace(/<[^>]+>/g, "").length;
+  const w = t => `<span class="t-warn">${t}</span>`;
+  return [w("╭" + "─".repeat(W) + "╮"), ...rows.map(h => `${w("│")} ${h}${" ".repeat(W - 1 - plain(h))}${w("│")}`), w("╰" + "─".repeat(W) + "╯")].join("\n");
+})();
+/* 终端假内容：t-dim 灰 / t-acc 强调 / t-ok 绿 / t-warn 黄 / t-err 红 / t-blue 蓝 / b 粗体 */
+const TERM = `<span class="t-dim">PS C:\\workspace\\tether-hub&gt;</span> claude
+<span class="t-acc">✻</span> <b>Welcome to Claude Code</b>   <span class="t-dim">cwd: C:\\workspace\\tether-hub</span>
+
+<span class="t-dim">&gt;</span> 跑一下测试，把失败的那个修掉
+
+<span class="t-acc">●</span> 先运行测试看看哪些用例失败。
+
+<span class="t-ok">●</span> <b>Bash</b>(pnpm test)
+  <span class="t-dim">⎿</span>  <span class="t-err">✗ takeover › rejects unknown session (4 ms)</span>
+     <span class="t-dim">Expected: "not_found"  Received: "offline"</span>
+     <span class="t-ok">31 passed</span>, <span class="t-err">1 failed</span>
+
+<span class="t-ok">●</span> <b>Update</b>(src/hub.ts)
+  <span class="t-dim">⎿</span>  Updated src/hub.ts with 1 addition and 1 removal
+      <span class="t-dim">118</span>    if (!m.online) return deny('offline');
+      <span class="t-dim">119</span> <span class="t-del">-  const s = m.sessions.get(id);</span>
+      <span class="t-dim">119</span> <span class="t-ins">+  const s = m.sessions.get(Number(id));</span>
+
+${BOX}
+  <span class="t-dim">⏵⏵ accept edits on (shift+tab to cycle)       最后一行：底部不应被裁切</span>`;
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* 视图切换：[data-go] 切换 .view[data-view]；[data-tstate] 切换终端状态；支持 #main / #term:reclaimed 便于截图 */
+function hubViews(onTerm) {
+  const show = (v, t) => {
+    document.querySelectorAll('.view').forEach(el => { el.hidden = el.dataset.view !== v; });
+    document.querySelectorAll('[data-go]').forEach(b => b.setAttribute('aria-current', b.dataset.go === v ? 'page' : 'false'));
+    document.body.dataset.view = v;
+    if (v === 'term') setT(t || document.body.dataset.tstate || 'active');
+  };
+  const setT = t => {
+    document.body.dataset.tstate = t;
+    document.querySelectorAll('[data-tstate]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tstate === t));
+    onTerm && onTerm(t, TSTATE[t]);
+  };
+  document.addEventListener('click', e => {
+    const go = e.target.closest('[data-go]'); if (go) { e.preventDefault(); show(go.dataset.go); history.replaceState(null, '', '#' + go.dataset.go); }
+    const ts = e.target.closest('[data-tstate]'); if (ts) setT(ts.dataset.tstate);
+  });
+  document.querySelectorAll('form[data-login]').forEach(f => f.addEventListener('submit', e => { e.preventDefault(); show('main'); }));
+  const [v, t] = (location.hash.slice(1) || 'main').split(':');
+  show(['login', 'main', 'term', 'audit'].includes(v) ? v : 'main', t);
+}
+
+document.getElementById('alarm').innerHTML = ATTN.map(({ m, s }) => `
+  <section class="grid alarm"><div class="k"><b>${ATTN.length}</b>个会话等你确认</div>
+    <div class="body"><h2>${esc(s.name)} 在 ${esc(m.name)} 上等你确认</h2><p>${esc(s.ask)}。最后活动：${esc(s.last)}。</p></div>
+    <div class="go"><button class="btn inv" data-go="term">接管并处理</button></div></section>`).join('');
+document.getElementById('summary').innerHTML = `<div><b>${SUMMARY.online}/${SUMMARY.machines}</b>台机器在线</div><div><b>${SUMMARY.sessions}</b>个会话未退出</div><div><b>${SUMMARY.waiting}</b>个等待确认</div><div><b>${AUDIT.filter(a => a.time.startsWith('11-15') && a.event === 'start').length}</b>次接管（今天）</div>`;
+const mark = s => s.claude ? `<span class="sq ${s.claude === 'done' ? 'ring' : ''}"></span>Claude ${CLAUDE[s.claude]}` : '';
+document.getElementById('machines').innerHTML = MACHINES.map(m => `
+  <section class="grid machine">
+    <div class="m-side"><h2>${esc(m.name)}</h2><dl><dt>状态</dt><dd class="${m.online ? 'on' : 'off'}">${m.online ? '在线' : '离线'}</dd><dt>最后在线</dt><dd>${esc(m.seen)}</dd><dt>版本</dt><dd>Tether ${m.version}</dd><dt>token</dt><dd>${esc(m.token)}</dd></dl></div>
+    <div class="m-list">${m.sessions.length ? `<div class="s hd"><span>会话</span><span>目录与命令</span><span>状态</span><span>开始 / 活动</span><span></span></div>` + m.sessions.map(s => `
+      <div class="s ${s.claude === 'waiting' ? 'wait' : ''} s-${s.status}">
+        <div><div class="nm">${esc(s.name)}</div>${s.host ? `<span class="ssh">SSH ${esc(s.host)}</span>` : ''}</div>
+        <div class="path">${esc(s.cwd)}<br><span>${esc(s.cmd)}</span></div>
+        <div class="st">${STATUS[s.status]}<span>${mark(s)}</span></div>
+        <div class="tm"><b>${esc(s.started)}</b><br>${esc(s.last)}</div>
+        <div class="act">${s.status !== 'exited' ? `<button class="btn ${s.claude === 'waiting' ? '' : 'line'}" data-go="term">接管</button>` : ''}</div>
+      </div>`).join('') : `<div class="none">离线，暂无会话信息。机器重新连上后会自动列出。</div>`}</div>
+  </section>`).join('');
+document.getElementById('term').innerHTML = TERM;
+const bad = ['denied', 'disabled', 'disconnected', 'reclaimed'];
+document.getElementById('audit').innerHTML = AUDIT.map(a => `<tr class="${bad.includes(a.event) ? 'bad' : ''}"><td class="mono">${a.time}</td><td class="ev">${EVENT[a.event]}</td><td>${a.machine}</td><td>${a.session}</td><td class="mono">${a.ip || '—'}</td></tr>`).join('');
+hubViews((t, info) => { document.getElementById('tstate').textContent = info.label; document.getElementById('nn').textContent = info.note; });
+</script>
+</body>
+</html>
