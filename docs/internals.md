@@ -14,7 +14,11 @@
 ## 远程接管
 
 - 前提：客户端设置中开启「允许 hub 远程接管本机会话」（默认关闭；关闭时网页显示「本机未允许接管」）。
-- 在线机器的未退出会话旁有「接管」按钮，点击后打开全屏终端页（xterm.js）：先显示屏幕快照，再接实时输出；键入、粘贴（支持多行）会发送到会话，窗口尺寸变化会同步 resize。有选区时 Ctrl+C 复制，Ctrl+V 粘贴。手机上点终端唤起软键盘，单指滑动滚动历史（全屏程序中发送方向键），底部按键条提供 Esc / Tab / Ctrl（一次性粘滞）/ 方向键。
+- 在线机器的未退出会话旁有「接管」按钮，点击后打开全屏终端页（xterm.js）：先显示屏幕快照，再接实时输出；键入、粘贴（支持多行）会发送到会话，窗口尺寸变化会同步 resize。有选区时 Ctrl+C 复制，Ctrl+V 粘贴。手机上点终端唤起软键盘，单指滑动滚动历史（全屏程序中发送方向键），底部按键条提供 Esc / Tab / Ctrl（一次性粘滞）/ 方向键 / 粘贴 / 图片。
+- 触屏点选选项：Claude Code 等弹出编号选项列表（`❯ 1. Yes` / `2. …` / `3. No`）时，轻点某一项（含其折行或缩进续行）即从当前选中项发 ↑ / ↓（遵循应用光标键模式）移到该项再发回车，不依赖数字键；被点行短暂高亮，不弹出键盘。只在点按时检测：视口内编号从 1 连续、至少 2 项、恰一项带 `❯` / `>` 标记，取最靠下的一组；滚离底部、接管未生效、滑动或按停惯性的触摸不处理；点在其他位置保持原行为。桌面鼠标点击不变。
+- 回看历史（Tether 0.5.0+，能力 `history`）：接管时先写入 Tether 保存的历史（最多 3000 行），再写快照，可向上滚动查看接管前的输出；xterm scrollback 为 10000 行。全屏程序（备用屏）中滑动仍按全屏程序规则发方向键 / 滚轮。
+- 粘贴键：安全上下文（https 或 localhost）下直接读剪贴板（`clipboard.read()`，只有图片时走贴图，否则 `term.paste` 文本）；明文 http、无权限或读取失败时打开粘贴弹层，手动粘贴后发送（同样走 `term.paste`：换行转回车，程序开启括号粘贴模式时自动包裹）。
+- 贴图（Tether 0.5.0+，能力 `image`，仅本地会话）：「图片」键选择图片（手机上由系统给出相册 / 拍照），或在终端里 Ctrl+V 粘贴只含图片的剪贴板（截图）；上传后 Tether 保存为临时文件并把路径输入到会话（不回车），终端顶部提示「已插入图片路径」或失败原因。机器的 Tether 不支持、SSH 会话时「图片」键置灰，点按提示原因。剪贴板同时有文本与图片时（如从 Office 复制）按文本粘贴。
 - 同一会话可在多个浏览器同时打开，hub 只向 daemon 发一次接管（新加入的浏览器会再发一次 `attach` 取得新快照），最后一个浏览器关闭时 hub 发 `detach`，daemon 停止推送。
 - 结束原因显示在终端上方：已被本地收回 / 本机未允许接管 / 会话已退出 / 机器离线 / 连接已断开，终端转为只读。结束后不会自动重新接管；被本地收回、机器离线或连接中断时可点「重新接管」。关闭终端页即断开接管。
 
@@ -24,11 +28,34 @@
 
 | 方向 | 消息 |
 |------|------|
-| 下行 | `{"type":"snapshot","cols":120,"rows":30,"data":"<base64>"}` 接管成功时的屏幕快照（每个浏览器一次） |
+| 下行 | `{"type":"snapshot","cols":120,"rows":30,"data":"<base64>","history":"<base64>"}` 接管成功时的屏幕快照（每个浏览器一次）；`history` 仅 daemon 带了时才有，浏览器按 reset → resize → 写 history → 写 data 的顺序处理 |
 | 下行 | `{"type":"output","data":"<base64>"}` 实时输出 |
-| 下行 | `{"type":"detached","reason":"reclaimed\|disabled\|exited\|offline"}` 接管结束，随后 hub 关闭连接 |
+| 下行 | `{"type":"detached","reason":"reclaimed\|disabled\|exited\|offline\|session_closed"}` 接管结束，随后 hub 关闭连接；`session_closed` 表示会话被网页关闭（daemon 回 `detached(exited)` 时该会话有进行中的关闭请求） |
 | 下行 | `{"type":"denied","reason":"disabled\|not_found\|probe"}` 接管被拒，随后 hub 关闭连接 |
 | 上行 | `{"type":"input","data":"<base64>"}`、`{"type":"resize","cols":120,"rows":30}`（1–1000），收到快照前发送的会被忽略 |
+
+机器状态（`/api/state`、SSE `state`）中每台机器带 `caps`：本次连接 hello 声明且 hub 也支持的能力（离线时为空），前端据此决定贴图键是否可用。
+
+### 网页关闭会话
+
+机器详情中运行中的会话旁有「关闭」按钮，页内二次确认后调用 `POST /api/session/close?machine=<machineId>&session=<sessionId>`（需登录且同源）：成功 200 `{"ok":true}`，该会话随后从 Tether 上报的会话列表中消失；正在查看该会话终端的浏览器关闭终端页，回到机器页并提示「会话「名称」已关闭」；机器离线或 Tether 无 `close` 能力 409；daemon 回 `ok:false` 时 422 `{"error":"…","reason":"disabled|not_found"}`；10 s 未回复 504；等待中断线 409。无 `close` 能力或离线时按钮置灰并说明原因；hub 不知道本机是否允许接管，未允许时由 422 的原因提示。实现见 `Web.closeSession` 与 `Agents.closeSession`。
+
+### 贴图接口
+
+`POST /api/term/image?machine=<machineId>&session=<sessionId>`，请求体为原始图片，需登录且 `Origin` 与 `Host` 同源。实现见 `Web.image` 与 `Agents.uploadImage`。
+
+| 状态 | 情况 |
+|------|------|
+| 200 `{"path":"…"}` | daemon 回 `imageSaved`，路径已输入到会话 |
+| 400 | 参数错误或请求体为空 |
+| 401 / 403 | 未登录 / 跨源 |
+| 413 | 超过 10 MB（先看 `Content-Length`，再边读边限） |
+| 415 | `Content-Type` 不是 `image/png`、`image/jpeg`、`image/gif`、`image/webp` |
+| 409 | 机器离线、该机器 Tether 无 `image` 能力（需 0.5.0+）、该会话没有生效的接管，或等待期间接管结束 / 断线 |
+| 422 `{"error":"…","reason":"…"}` | daemon 回 `imageFailed`，`reason` 见协议 8.3，`error` 为中文说明 |
+| 504 | 60 s 内 daemon 未回复 |
+
+hub 按 256 KB 分块发 `imageChunk`，每块等写入 socket，WebSocket 发送缓冲超过 1 MB 时暂停，避免大图拖慢同一连接上的终端输出。
 
 ## 检查更新与一键更新
 
@@ -96,17 +123,17 @@
 
 ## 接管审计
 
-hub 按协议第 7 节把接管事件追加到 `HUB_DATA_DIR/audit.jsonl`：`start`（开始）、`denied`（被拒，附 `reason`）、`end`（最后一个浏览器离开）、`reclaimed`（本地收回）、`disabled`（本地关闭允许接管）、`exited`（会话退出）、`disconnected`（机器断线）。网页「审计日志」页显示最近 500 条，可按事件、机器、关键字（会话名称 / 来源 IP）筛选；`GET /api/audit?limit=N`（需登录，默认 100，上限 1000）返回最近 N 条，新的在前。
+hub 按协议第 7 节把接管事件追加到 `HUB_DATA_DIR/audit.jsonl`：`start`（开始）、`denied`（被拒，附 `reason`）、`end`（最后一个浏览器离开）、`reclaimed`（本地收回）、`disabled`（本地关闭允许接管）、`exited`（会话退出）、`disconnected`（机器断线），以及贴图 `image`（附 `bytes`、`mime`）/ `image_failed`（附 `reason`：daemon 回的原因，或 `timeout` 超时、`ended` 等待期间接管结束；接口直接返回 409 / 413 / 415 的不记），以及网页关闭会话 `close` / `close_failed`（附 `reason`：`disabled`、`not_found`，或 `timeout` 超时、`disconnected` 等待中断线）。不记图片路径、不存图片。网页「审计日志」页显示最近 500 条，可按事件、机器、关键字（会话名称 / 来源 IP）筛选；`GET /api/audit?limit=N`（需登录，默认 100，上限 1000）返回最近 N 条，新的在前。
 
 ## 数据
 
 `data/hub.json` 保存 token（名称、SHA-256、创建时间、是否已吊销）与机器档案（machineId、名称、版本、token 名、最后在线时间）。hub 与 CLI 读改写时用 `hub.json.lock` 互斥，并先写临时文件再 rename，保证文件始终完整。会话列表只在内存中，hub 重启后由客户端重连时重新上报。
 
-`data/audit.jsonl` 为审计日志，每行一个 JSON（接管事件：时间、事件、机器、会话、来源 IP；更新事件：时间、事件、原版本、目标版本、失败原因；token 事件：时间、事件、token 名称、来源 IP），只追加不清理，需要时自行归档。
+`data/audit.jsonl` 为审计日志，每行一个 JSON（接管、贴图与关闭会话事件：时间、事件、机器、会话、来源 IP，贴图另有字节数、类型，失败事件附原因；更新事件：时间、事件、原版本、目标版本、失败原因；token 事件：时间、事件、token 名称、来源 IP），只追加不清理，需要时自行归档。
 
 ## 安全要点
 
 - WebSocket `/agent` 用 `Authorization: Bearer <token>` 认证，失败返回 HTTP 401 且不升级。
-- 单条消息上限 1 MB（超出以 1009 关闭）；连接后 10 s 内未收到合法 hello 以 `bad_hello`（4003）关闭。
+- 单条消息上限：`/agent` 4 MB（`attached` 可带历史），浏览器 `/api/term` 1 MB，超出以 1009 关闭；贴图上传请求体上限 10 MB；连接后 10 s 内未收到合法 hello 以 `bad_hello`（4003）关闭。
 - hub 每 25 s 发送 ping，一个周期内未收到 pong 的连接被断开。
 - Web API 与终端 WebSocket 全部要求登录，终端 WebSocket 另校验 Origin 同源；页面带 CSP（只允许同源脚本；xterm.js 运行时会插入 `<style>`，样式允许 inline）。

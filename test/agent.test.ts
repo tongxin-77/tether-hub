@@ -35,7 +35,7 @@ test('hello → welcome，机器上线并持久化', async () => {
   await c.opened;
   c.hello('m-welcome');
   const w = await c.next('welcome');
-  assert.deepEqual(w, { type: 'welcome', proto: 2, hubVersion: HUB_VERSION });
+  assert.deepEqual(w, { type: 'welcome', proto: 2, hubVersion: HUB_VERSION, caps: ['history', 'image', 'close'] });
   const m = ctx.hub.agents.machines.get('m-welcome')!;
   assert.equal(m.online, true);
   assert.equal(m.tokenName, 'pc1');
@@ -117,7 +117,7 @@ test('probe 连接：回 welcome，但常驻连接不收到 replaced、Web 状�
   const probe = new Client(ctx.wsUrl, ctx.token);
   await probe.opened;
   probe.hello('m-probe', { machineName: 'PROBE-NAME', version: '9.9.9', probe: true });
-  assert.deepEqual(await probe.next('welcome'), { type: 'welcome', proto: 2, hubVersion: HUB_VERSION });
+  assert.deepEqual(await probe.next('welcome'), { type: 'welcome', proto: 2, hubVersion: HUB_VERSION, caps: ['history', 'image', 'close'] });
   probe.send({ type: 'sessions', sessions: [] });
   await new Promise((r) => setTimeout(r, 150));
   probe.ws.close();
@@ -169,12 +169,12 @@ test('同一 machineId 重连：旧连接收到 replaced（4004），新连接�
   await b.closed;
 });
 
-test('超过 1 MB 的消息被拒绝', async () => {
+test('超过 4 MB 的消息被拒绝', async () => {
   const c = new Client(ctx.wsUrl, ctx.token);
   await c.opened;
   c.hello('m-big');
   await c.next('welcome');
-  c.send('x'.repeat(1024 * 1024 + 1));
+  c.send('x'.repeat(4 * 1024 * 1024 + 1));
   assert.equal((await c.closed).code, 1009);
 });
 

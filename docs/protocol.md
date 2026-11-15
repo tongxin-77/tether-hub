@@ -1,6 +1,6 @@
 # daemon ↔ hub 协议（v2）
 
-> v1：机器接入（H-1.1 ~ H-1.5）与会话汇总（H-2.1 ~ H-2.3）。v2 增加远程接管（H-3，见第 6 节）与接管审计（H-4.1，见第 7 节）。
+> v1：机器接入（H-1.1 ~ H-1.5）与会话汇总（H-2.1 ~ H-2.3）。v2 增加远程接管（H-3，见第 6 节）与接管审计（H-4.1，见第 7 节）；之后通过能力位（第 8 节）增加接管回看历史、贴图与网页关闭会话（hub 0.4.0 / Tether 0.5.0），`proto` 仍为 2。
 > v1 未发布，hub 与客户端都只支持 `proto: 2`。
 > 需求见 [requirements.md](requirements.md)。hub 与客户端各自实现，以本文档为准；改动协议须同时改本文档并递增 `proto`。
 
@@ -30,7 +30,8 @@
 - `machineName`：`COMPUTERNAME` 环境变量。
 - `version`：Tether 版本。
 - `probe`（可选，默认 `false`）：`true` 表示这是「测试连接」的探测连接。hub 照常校验并回 `welcome`，但**不登记、不替换**同一 `machineId` 的常驻连接，也不更新机器档案；探测连接随后由客户端关闭，hub 收到 `sessions` 时忽略。
-- 字段约束：`proto` 必须是数字（缺失或非数字按 `bad_hello`）；`machineId` 1–64 字符，`machineName`、`version` 不超过 256 字符，超出按 `bad_hello`。
+- `caps`（可选，见第 8 节）：客户端支持的能力名数组，如 `["history","image","close"]`。
+- 字段约束：`proto` 必须是数字（缺失或非数字按 `bad_hello`）；`machineId` 1–64 字符，`machineName`、`version` 不超过 256 字符，超出按 `bad_hello`。`caps` 不是字符串数组或超过 16 项时按空集处理，不断开。
 
 **sessions**（收到 `welcome` 后立即发一次；之后在本地 GUI 侧栏刷新会话列表的同一时机发送全量，500 ms 防抖；单纯的终端输出（只改变 `lastActivityAt`）不触发上报，见 H-2.2）
 
@@ -45,8 +46,10 @@
 **welcome**（hub 校验 hello 通过后回复）
 
 ```json
-{ "type": "welcome", "proto": 2, "hubVersion": "0.1.0" }
+{ "type": "welcome", "proto": 2, "hubVersion": "0.4.0", "caps": ["history", "image", "close"] }
 ```
+
+`caps`：hub 支持的能力名（第 8 节），旧 hub 不带。
 
 **error**（随后 hub 关闭连接）
 
@@ -106,13 +109,13 @@
 ### 6.3 上行（daemon → hub）
 
 ```json
-{ "type": "attached", "sessionId": 3, "cols": 120, "rows": 30, "snapshot": "<base64>" }
+{ "type": "attached", "sessionId": 3, "cols": 120, "rows": 30, "snapshot": "<base64>", "history": "<base64>" }
 { "type": "attachDenied", "sessionId": 3, "reason": "disabled" }
 { "type": "output", "sessionId": 3, "data": "<base64>" }
 { "type": "detached", "sessionId": 3, "reason": "reclaimed" }
 ```
 
-- `attached`：接管成功。`snapshot` 为 vt100 `state_formatted()` 的 base64（与本地管道 `Snapshot` 相同），`cols`/`rows` 为当前终端尺寸。之后该会话的每块 PTY 输出都以 `output` 推送（base64，与本地管道 `Output` 相同）。
+- `attached`：接管成功。`snapshot` 为 vt100 `state_formatted()` 的 base64（与本地管道 `Snapshot` 相同），`cols`/`rows` 为当前终端尺寸。之后该会话的每块 PTY 输出都以 `output` 推送（base64，与本地管道 `Output` 相同）。`history` 可选，仅双方都有能力 `history` 时带（见 8.2）。
 - `attachDenied.reason`：`disabled`（本机未允许接管）/ `not_found`（会话不存在或已退出）/ `probe`（探测连接）。重复 `attach` 已接管的会话时按成功处理，重新发一次 `attached`（含新快照）。
 - `detached.reason`：`reclaimed`（本地收回）/ `disabled`（本地关闭了允许接管）/ `exited`（会话已退出）。hub 主动 `detach` 的不回 `detached`。
 
@@ -125,3 +128,64 @@ hub 将接管事件逐行追加到 `HUB_DATA_DIR/audit.jsonl`，每行一个 JSO
 ```
 
 `event`：`start`（浏览器发起接管且 daemon 回 `attached`）/ `denied`（附 `reason`）/ `end`（hub 侧结束：最后一个浏览器离开）/ `reclaimed`（本地收回）/ `disabled` / `exited` / `disconnected`（机器断线导致结束）。`ip` 为发起或最后离开的浏览器来源 IP（有则记）。Web 界面可查看最近的审计记录。
+
+贴图（第 8.3 节）另记 `image`（成功，附 `bytes`、`mime`、`ip`）与 `image_failed`（附 `reason`：daemon 回的原因，或 hub 侧的 `timeout` / `ended`），不记保存路径、不存图片。网页关闭会话（第 8.4 节）记 `close`（成功）与 `close_failed`（附 `reason`：daemon 回的原因，或 hub 侧的 `timeout` / `disconnected`）。
+
+## 8. 能力位（v2）
+
+### 8.1 协商
+
+- `hello.caps` 与 `welcome.caps` 均为字符串数组，可缺省（= 空集），未知能力名忽略。`proto` 保持 2。
+- 双方只使用两边都声明的能力。当前能力名：`history`、`image`、`close`。
+- 旧 hub（`welcome` 无 `caps`）→ Tether 不发 history、不期待图片；新 hub + 旧 Tether（`hello` 无 `caps`）→ hub 记为空集，网页无历史、贴图按钮置灰提示「需 Tether 0.5.0+」。两种情况都不断开。
+- hub 的 `/agent` 单条消息上限为 4 MB（浏览器 `/api/term` 仍为 1 MB）。
+
+### 8.2 历史 history
+
+- `attached` 增加可选字段 `history`（base64），仅双方都有 `history` 时才带。
+- 解码后是可直接写入 xterm 的字节流：
+  1. 历史各行（每行 SGR 着色、行首自带属性复位；行间 `\r\n`；自动折行的行与下一行之间不插 `\r\n`）；
+  2. 接着 `rows` 个 `\r\n`，把历史全部推入 scrollback；
+  3. 若会话当前在备用屏，末尾追加 `\x1b[?1049h`。
+- 会话尚无历史时仍可带 `history`：可能为空串，或备用屏时仅 `\x1b[?1049h`，此时不追加 `rows` 个 `\r\n`。hub 与浏览器须接受空串。
+- 浏览器顺序：reset → resize(cols, rows) → write(history) → write(snapshot)。hub 把 `history` 原样放进给浏览器的 `snapshot` 消息。
+- 上限：Tether 每会话环形缓冲 ≤ 5000 行且 ≤ 2 MB；`attached` 发送最近 ≤ 3000 行且原始字节 ≤ 1 MB，从最旧端截断。备用屏产生的行不进历史；遇到 `\x1b[3J` 清空历史（需处理跨块）。
+
+### 8.3 贴图 image（仅本地会话）
+
+浏览器把图片上传到 hub（`POST /api/term/image`，见 [internals.md](internals.md)），hub 分块转给 daemon，daemon 保存为临时文件后把路径作为输入写入该会话。
+
+下行（hub → daemon），每块原始 ≤ 256 KB，base64：
+
+```json
+{ "type": "imageBegin", "sessionId": 3, "uploadId": "<随机串>", "mime": "image/png", "size": 834211 }
+{ "type": "imageChunk", "sessionId": 3, "uploadId": "…", "data": "<base64>" }
+{ "type": "imageEnd", "sessionId": 3, "uploadId": "…" }
+```
+
+上行（daemon → hub）：
+
+```json
+{ "type": "imageSaved", "sessionId": 3, "uploadId": "…", "path": "C:\\Users\\a\\AppData\\Local\\Temp\\tether-img\\<uuid>.png" }
+{ "type": "imageFailed", "sessionId": 3, "uploadId": "…", "reason": "unsupported" }
+```
+
+- `mime` ∈ `image/png`、`image/jpeg`、`image/gif`、`image/webp`。
+- daemon 可在 `imageBegin` 时提前校验并立即回 `imageFailed`（早于 `imageEnd`），此后该 `uploadId` 的 chunk / end 被忽略；hub 收到即结束该上传并停止发送剩余分块。`imageChunk` 的 base64 无法解码时 daemon 回 `io`。
+- `imageFailed.reason`：`disabled`（本机未允许接管）/ `not_taken_over`（会话未被 hub 接管）/ `unsupported`（SSH 等非本地会话）/ `too_large`（累计 > 10 MB 或与 `size` 不符）/ `bad_type`（文件头 magic 不是声明的类型）/ `io`（写文件失败）。
+- daemon：组装上传（单个上传 60 s 超时、累计 > 10 MB 丢弃；detach / 断线清理）；保存到 `%TEMP%\tether-img\<uuid>.<ext>`（create_new）；启动时及每小时删除超过 24 h 的文件；然后把路径作为输入写入该会话：路径含空格时 Windows 用双引号包裹；会话处于 bracketed paste 模式时包 `\e[200~…\e[201~`；不追加回车。
+- daemon 侧上传超过 60 s 未完成则静默丢弃，由 hub 的 60 s 超时返回 504。
+- hub：等待回复 60 s 超时；接管结束或断线时放弃等待；未知 `reason` 显示为「贴图失败（<reason>）」。
+
+### 8.4 网页关闭会话 close
+
+```json
+{ "type": "close", "sessionId": 3, "requestId": "<随机串>" }
+{ "type": "closeResult", "sessionId": 3, "requestId": "…", "ok": true }
+{ "type": "closeResult", "sessionId": 3, "requestId": "…", "ok": false, "reason": "disabled" }
+```
+
+- `close` 为 hub → daemon，`closeResult` 为 daemon → hub。
+- `reason`：`disabled`（本机未开启「允许 hub 远程接管本机会话」，复用该开关，不新增设置）/ `not_found`（会话不存在或已退出）。
+- 不要求该会话正被接管。daemon 用与本地 UI「关闭会话」相同的路径结束会话（本地会话结束进程树、SSH 会话关闭通道），之后照常通过 `sessions` 上报（该会话从列表中消失，与本地 UI 关闭一致）；若正被接管，先发 `detached`（`reason: "exited"`）再发 `closeResult`。hub 对此 `detached` 照常记审计 `exited`，并告知浏览器 `session_closed`；`closeResult` 另记 `close`。
+- hub：等待回复 10 s 超时；断线时放弃等待。

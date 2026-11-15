@@ -1,4 +1,4 @@
-// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话 / 更新状态变化，/api/term 终端接管 WebSocket，机器 token 管理。
+// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话 / 更新状态变化，/api/term 终端接管 WebSocket 与贴图上传，网页关闭会话，机器 token 管理。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { MAX_MESSAGE, reject, type Agents, type Machine } from './agents.js';
+import { IMAGE_TYPES, MAX_IMAGE, MAX_MESSAGE, reject, type Agents, type Machine } from './agents.js';
 import { appendAudit, readAudit, type TokenAuditRec } from './audit.js';
 import { createToken, readData, revokeToken } from './store.js';
 import type { Updater } from './update.js';
@@ -102,9 +102,11 @@ export class Web {
         return json(res, 200, readAudit(this.opt.dataDir, Number.isInteger(n) && n > 0 ? Math.min(n, 1000) : 100));
       }
       if (route === 'GET /api/update') return json(res, 200, this.updateStatus());
-      if (req.method === 'POST' && (url.pathname.startsWith('/api/update/') || url.pathname.startsWith('/api/tokens')) && !sameOrigin(req)) {
+      if (req.method === 'POST' && (url.pathname.startsWith('/api/update/') || url.pathname.startsWith('/api/tokens') || url.pathname === '/api/term/image' || url.pathname === '/api/session/close') && !sameOrigin(req)) {
         return json(res, 403, { error: '来源不允许' });
       }
+      if (route === 'POST /api/term/image') return await this.image(req, res, url);
+      if (route === 'POST /api/session/close') return await this.closeSession(req, res, url);
       if (route === 'POST /api/update/check') {
         void this.updater.check();
         return json(res, 202, this.updateStatus());
@@ -169,6 +171,35 @@ export class Web {
       this.terms.delete(ws);
       h?.leave();
     });
+  }
+
+  /** POST /api/term/image?machine=…&session=…：请求体为原始图片，转给 daemon 保存后把路径输入到会话 */
+  private async image(req: IncomingMessage, res: ServerResponse, url: URL) {
+    const mime = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+    if (!IMAGE_TYPES.includes(mime)) return json(res, 415, { error: '仅支持 PNG / JPEG / GIF / WebP 图片' });
+    const machine = url.searchParams.get('machine') ?? '';
+    const session = Number(url.searchParams.get('session') ?? '');
+    if (!machine || !Number.isInteger(session) || session < 0) return json(res, 400, { error: '参数错误' });
+    // 先看 Content-Length，再在读取时累计限制（分块传输没有 Content-Length）。
+    // 回 413 后未读完的请求体由 Node 丢弃，连接保持，客户端能正常收到响应（提前断开会让浏览器只看到网络错误）
+    const tooLarge = { error: '图片过大（上限 10 MB）' };
+    if (Number(req.headers['content-length'] ?? 0) > MAX_IMAGE) return json(res, 413, tooLarge);
+    const data = await readBuf(req, MAX_IMAGE);
+    if (!data) return json(res, 413, tooLarge);
+    if (!data.length) return json(res, 400, { error: '图片为空' });
+    const r = await this.agents.uploadImage(machine, session, mime, data, req.socket.remoteAddress ?? '');
+    if (r.ok) return json(res, 200, { path: r.path });
+    json(res, r.status, r.reason ? { error: r.error, reason: r.reason } : { error: r.error });
+  }
+
+  /** POST /api/session/close?machine=…&session=…：请 daemon 关闭该会话（不要求正被接管） */
+  private async closeSession(req: IncomingMessage, res: ServerResponse, url: URL) {
+    const machine = url.searchParams.get('machine') ?? '';
+    const session = Number(url.searchParams.get('session') ?? '');
+    if (!machine || !Number.isInteger(session) || session < 0) return json(res, 400, { error: '参数错误' });
+    const r = await this.agents.closeSession(machine, session, req.socket.remoteAddress ?? '');
+    if (r.ok) return json(res, 200, { ok: true });
+    json(res, r.status, r.reason ? { error: r.error, reason: r.reason } : { error: r.error });
   }
 
   private authed(req: IncomingMessage) {
@@ -343,6 +374,24 @@ function parseCookies(header?: string): Record<string, string> {
     if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
   }
   return out;
+}
+
+/** 读取原始请求体；超过 limit 时立即返回 null，剩余部分继续读取并丢弃（不断开连接，以便客户端收到 413） */
+function readBuf(req: IncomingMessage, limit: number): Promise<Buffer | null> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    const onData = (c: Buffer) => {
+      size += c.length;
+      if (size <= limit) return chunks.push(c);
+      req.off('data', onData);
+      req.resume();
+      resolve(null);
+    };
+    req.on('data', onData);
+    req.on('end', () => resolve(size <= limit ? Buffer.concat(chunks) : null));
+    req.on('error', reject);
+  });
 }
 
 function readBody(req: IncomingMessage, limit: number): Promise<string> {

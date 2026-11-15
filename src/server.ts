@@ -25,6 +25,10 @@ export interface HubOptions {
   dataDir: string;
   helloTimeoutMs?: number;
   pingIntervalMs?: number;
+  /** 贴图等待 daemon 回复的超时（默认 60 s） */
+  imageTimeoutMs?: number;
+  /** 网页关闭会话等待 daemon 回复的超时（默认 10 s） */
+  closeTimeoutMs?: number;
   /** 轮询 hub.json 的间隔 */
   watchIntervalMs?: number;
   log?: (msg: string) => void;
@@ -64,6 +68,8 @@ export async function startHub(opt: HubOptions): Promise<Hub> {
       hubVersion: HUB_VERSION,
       helloTimeoutMs: opt.helloTimeoutMs ?? 10_000,
       pingIntervalMs: opt.pingIntervalMs ?? 25_000,
+      imageTimeoutMs: opt.imageTimeoutMs,
+      closeTimeoutMs: opt.closeTimeoutMs,
       tokens: () => tokens,
       persist,
       audit: (rec) => {

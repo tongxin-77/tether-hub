@@ -1,5 +1,6 @@
 // daemon 连接管理与远程接管：协议见 docs/protocol.md（v2）。
 
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -8,7 +9,35 @@ import type { AuditRec } from './audit.js';
 import { findToken, type MachineRec, type TokenRec } from './store.js';
 
 export const PROTO = 2;
+/** 浏览器终端 WebSocket（/api/term）单条消息上限 */
 export const MAX_MESSAGE = 1024 * 1024;
+/** daemon 连接（/agent）单条消息上限：attached 可带最多约 1 MB 原始字节的历史（base64 后更大） */
+export const MAX_AGENT_MESSAGE = 4 * 1024 * 1024;
+/** hub 支持的能力位（协议 v2 能力位协商），随 welcome 下发；双方都声明的才使用 */
+export const HUB_CAPS = ['history', 'image', 'close'];
+/** 贴图：允许的类型、单张上限、分块大小（原始字节）、等待 daemon 回复的默认超时 */
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+export const MAX_IMAGE = 10 * 1024 * 1024;
+const IMAGE_CHUNK = 256 * 1024;
+const IMAGE_TIMEOUT = 60_000;
+/** 分块发送时 WebSocket 缓冲超过该值就等待，避免大图占满内存、拖慢同一连接上的终端输出 */
+const IMAGE_BUFFERED = 1024 * 1024;
+/** 网页关闭会话：等待 daemon 回 closeResult 的默认超时 */
+const CLOSE_TIMEOUT = 10_000;
+/** closeResult 失败原因 → 中文说明 */
+const CLOSE_REASON: Record<string, string> = {
+  disabled: '本机未允许 hub 远程接管（关闭会话复用该开关）',
+  not_found: '会话不存在或已退出',
+};
+/** daemon 回 imageFailed 的原因 → 中文说明 */
+const IMAGE_REASON: Record<string, string> = {
+  disabled: '本机未允许接管',
+  not_taken_over: '该会话未被 hub 接管',
+  unsupported: '仅本地会话支持贴图（SSH 等远程会话不支持）',
+  too_large: '图片过大（上限 10 MB）',
+  bad_type: '文件内容与图片类型不符',
+  io: '本机保存图片失败',
+};
 
 export interface ClaudeState {
   state: string;
@@ -38,6 +67,8 @@ export interface Machine {
   online: boolean;
   lastSeen: number;
   sessions: SessionInfo[];
+  /** 本次连接 hello 声明且 hub 也支持的能力位（离线时为空） */
+  caps: string[];
 }
 
 /** 查看某会话的一个浏览器（由 Web 层实现），收到的消息格式见 README「浏览器终端 WebSocket」 */
@@ -66,12 +97,38 @@ interface Takeover {
   ip: string;
 }
 
+/** 一次进行中的贴图上传，等待 daemon 回 imageSaved / imageFailed */
+interface Upload {
+  sessionId: number;
+  timer?: NodeJS.Timeout;
+  /** 结束上传（只生效一次）：写审计并返回结果 */
+  done: (r: ImageResult, auditReason?: string) => void;
+}
+
+/** uploadImage 的结果：成功为保存路径；失败附 HTTP 状态码与中文原因 */
+export type ImageResult = { ok: true; path: string } | { ok: false; status: number; error: string; reason?: string };
+
 interface Conn {
   ws: WebSocket;
   machineId: string;
   tokenHash: string;
   alive: boolean;
   takeovers: Map<number, Takeover>;
+  /** hello 声明且 hub 也支持的能力位 */
+  caps: Set<string>;
+  /** uploadId → 进行中的贴图 */
+  uploads: Map<string, Upload>;
+  /** requestId → 等待 closeResult 的关闭请求 */
+  closes: Map<string, Closing>;
+}
+
+/** 网页关闭会话的结果：成功，或附 HTTP 状态码与中文原因 */
+export type CloseResult = { ok: true } | { ok: false; status: number; error: string; reason?: string };
+
+interface Closing {
+  sessionId: number;
+  /** 结束请求（只生效一次）：写审计并返回结果 */
+  done: (r: CloseResult, auditReason?: string) => void;
 }
 
 export interface AgentOptions {
@@ -85,6 +142,10 @@ export interface AgentOptions {
   /** 记录一条接管审计 */
   audit: (rec: AuditRec) => void;
   log: (msg: string) => void;
+  /** 贴图等待 daemon 回复的超时（默认 60 s，测试可缩短） */
+  imageTimeoutMs?: number;
+  /** 关闭会话等待 daemon 回复的超时（默认 10 s，测试可缩短） */
+  closeTimeoutMs?: number;
 }
 
 const SESSION_KEYS = ['id', 'name', 'cwd', 'command', 'status', 'startedAt', 'lastActivityAt', 'host', 'hostId', 'claude'] as const;
@@ -94,6 +155,12 @@ const str = (v: unknown, min: number, max: number): v is string =>
   typeof v === 'string' && [...v].length >= min && [...v].length <= max;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** hello.caps：字符串数组且不超过 16 项，否则（含缺省）按空集；只保留 hub 也支持的 */
+function parseCaps(v: unknown): Set<string> {
+  if (!Array.isArray(v) || v.length > 16 || !v.every((c) => str(c, 1, 64))) return new Set();
+  return new Set(v.filter((c) => HUB_CAPS.includes(c)));
+}
 
 /** 只保留 SessionInfo 中已知字段 */
 function pickSession(s: Record<string, unknown>): SessionInfo {
@@ -108,12 +175,12 @@ export class Agents extends EventEmitter {
   private conns = new Map<string, Conn>();
   /** 所有连接（含尚未 hello 的） */
   private all = new Set<Conn>();
-  private wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE });
+  private wss = new WebSocketServer({ noServer: true, maxPayload: MAX_AGENT_MESSAGE });
   private pingTimer: NodeJS.Timeout;
 
   constructor(private opt: AgentOptions, saved: MachineRec[]) {
     super();
-    for (const m of saved) this.machines.set(m.machineId, { ...m, online: false, sessions: [] });
+    for (const m of saved) this.machines.set(m.machineId, { ...m, online: false, sessions: [], caps: [] });
     this.pingTimer = setInterval(() => this.ping(), opt.pingIntervalMs);
   }
 
@@ -145,7 +212,7 @@ export class Agents extends EventEmitter {
   }
 
   private onConnection(ws: WebSocket, token: TokenRec, addr: string) {
-    const conn: Conn = { ws, machineId: '', tokenHash: token.sha256, alive: true, takeovers: new Map() };
+    const conn: Conn = { ws, machineId: '', tokenHash: token.sha256, alive: true, takeovers: new Map(), caps: new Set(), uploads: new Map(), closes: new Map() };
     this.all.add(conn);
     ws.on('pong', () => (conn.alive = true));
     ws.on('error', (e) => this.opt.log(`连接错误（${addr}）：${e.message}`));
@@ -168,10 +235,11 @@ export class Agents extends EventEmitter {
           return fail(ws, 'bad_hello', '首条消息不是合法的 hello', 4003);
         }
         conn.machineId = msg.machineId;
+        conn.caps = parseCaps(msg.caps);
         if (msg.probe) {
           // 探测连接（客户端「测试连接」）：只回 welcome，不登记 / 不替换常驻连接、不更新档案；
           // 它不在 conns 中，之后的 sessions 与关闭都会被下方的「是否当前连接」检查忽略
-          send(ws, { type: 'welcome', proto: PROTO, hubVersion: this.opt.hubVersion });
+          send(ws, { type: 'welcome', proto: PROTO, hubVersion: this.opt.hubVersion, caps: HUB_CAPS });
           this.opt.log(`探测连接：${msg.machineName}（${msg.machineId}，token ${token.name}，${addr}）`);
           return;
         }
@@ -187,6 +255,20 @@ export class Agents extends EventEmitter {
         this.emit('change');
         return;
       }
+      if (msg.type === 'closeResult' && typeof msg.requestId === 'string') {
+        const c = conn.closes.get(msg.requestId);
+        if (!c || c.sessionId !== msg.sessionId) return;
+        if (msg.ok === true) return c.done({ ok: true });
+        const reason = String(msg.reason);
+        return c.done({ ok: false, status: 422, error: CLOSE_REASON[reason] ?? `关闭失败（${reason}）`, reason }, reason);
+      }
+      if ((msg.type === 'imageSaved' || msg.type === 'imageFailed') && typeof msg.uploadId === 'string') {
+        const u = conn.uploads.get(msg.uploadId);
+        if (!u || u.sessionId !== msg.sessionId) return;
+        if (msg.type === 'imageSaved' && typeof msg.path === 'string') return u.done({ ok: true, path: msg.path });
+        const reason = String(msg.reason);
+        return u.done({ ok: false, status: 422, error: IMAGE_REASON[reason] ?? `贴图失败（${reason}）`, reason }, reason);
+      }
       const t = typeof msg.sessionId === 'number' ? conn.takeovers.get(msg.sessionId) : undefined;
       if (!t) return;
       if (msg.type === 'attached' && typeof msg.snapshot === 'string') {
@@ -194,10 +276,11 @@ export class Agents extends EventEmitter {
           t.active = true;
           this.audit(conn, t.sessionId, 'start', { ip: t.ip });
         }
-        // 每次 attached 都带新快照：只发给还没拿到快照的浏览器
+        // 每次 attached 都带新快照：只发给还没拿到快照的浏览器；history（能力 history）原样转发
+        const history = typeof msg.history === 'string' ? { history: msg.history } : {};
         for (const v of t.viewers) {
           if (t.ready.has(v)) continue;
-          v.send({ type: 'snapshot', cols: msg.cols, rows: msg.rows, data: msg.snapshot });
+          v.send({ type: 'snapshot', cols: msg.cols, rows: msg.rows, data: msg.snapshot, ...history });
           t.ready.add(v);
         }
       } else if (msg.type === 'attachDenied') {
@@ -206,7 +289,9 @@ export class Agents extends EventEmitter {
       } else if (msg.type === 'output' && typeof msg.data === 'string') {
         for (const v of t.ready) v.send({ type: 'output', data: msg.data });
       } else if (msg.type === 'detached') {
-        this.finish(conn, t, { type: 'detached', reason: String(msg.reason) });
+        // 网页关闭会话时 daemon 先回 detached(exited) 再回 closeResult：告诉浏览器是被网页关闭的（审计仍记 exited，close 另记）
+        const closing = msg.reason === 'exited' && [...conn.closes.values()].some((c) => c.sessionId === t.sessionId);
+        this.finish(conn, t, { type: 'detached', reason: closing ? 'session_closed' : String(msg.reason) });
         this.audit(conn, t.sessionId, String(msg.reason) as AuditRec['event']);
       }
       // 其他类型按协议忽略
@@ -222,6 +307,7 @@ export class Agents extends EventEmitter {
       if (m) {
         m.online = false;
         m.lastSeen = Date.now();
+        m.caps = [];
       }
       this.opt.log(`机器下线：${m?.name}（${conn.machineId}）`);
       this.opt.persist();
@@ -240,9 +326,9 @@ export class Agents extends EventEmitter {
     const prev = this.machines.get(conn.machineId);
     this.machines.set(conn.machineId, {
       machineId: conn.machineId, name, version, tokenName,
-      online: true, lastSeen: Date.now(), sessions: prev?.sessions ?? [],
+      online: true, lastSeen: Date.now(), sessions: prev?.sessions ?? [], caps: [...conn.caps],
     });
-    send(conn.ws, { type: 'welcome', proto: PROTO, hubVersion: this.opt.hubVersion });
+    send(conn.ws, { type: 'welcome', proto: PROTO, hubVersion: this.opt.hubVersion, caps: HUB_CAPS });
     this.opt.log(`机器上线：${name}（${conn.machineId}，${version}，token ${tokenName}，${addr}）`);
     this.opt.persist();
     this.emit('change');
@@ -278,6 +364,7 @@ export class Agents extends EventEmitter {
         if (t.viewers.size) return;
         // 最后一个浏览器离开；尚未 attached 时也发 detach，daemon 会按顺序先处理 attach 再 detach
         conn.takeovers.delete(sessionId);
+        this.failUploads(conn, sessionId);
         send(conn.ws, { type: 'detach', sessionId });
         if (t.active) this.audit(conn, sessionId, 'end', { ip: v.ip });
       },
@@ -287,6 +374,7 @@ export class Agents extends EventEmitter {
   /** 结束一个接管：通知并关闭所有浏览器 */
   private finish(conn: Conn, t: Takeover, msg: object) {
     conn.takeovers.delete(t.sessionId);
+    this.failUploads(conn, t.sessionId);
     for (const v of t.viewers) {
       v.send(msg);
       v.end();
@@ -299,9 +387,87 @@ export class Agents extends EventEmitter {
       this.finish(conn, t, { type: 'detached', reason: 'offline' });
       if (t.active) this.audit(conn, t.sessionId, 'disconnected');
     }
+    this.failUploads(conn);
+    for (const c of [...conn.closes.values()]) c.done({ ok: false, status: 409, error: '机器已断开' }, 'disconnected');
   }
 
-  private audit(conn: Conn, sessionId: number, event: AuditRec['event'], extra: { ip?: string; reason?: string } = {}) {
+  /**
+   * 贴图：把图片分块发给 daemon（imageBegin → imageChunk… → imageEnd），等它回 imageSaved / imageFailed。
+   * 要求机器在线、双方都有 image 能力、该会话有生效的接管；接管结束 / 断线（409）、超时（504）都会结束等待。
+   */
+  async uploadImage(machineId: string, sessionId: number, mime: string, data: Buffer, ip: string): Promise<ImageResult> {
+    const conn = this.conns.get(machineId);
+    if (!conn) return { ok: false, status: 409, error: '机器离线' };
+    if (!conn.caps.has('image')) return { ok: false, status: 409, error: '该机器的 Tether 不支持贴图（需 Tether 0.5.0+）' };
+    if (!conn.takeovers.get(sessionId)?.active) return { ok: false, status: 409, error: '该会话没有生效的接管' };
+
+    const uploadId = randomUUID();
+    let settled = false;
+    const result = new Promise<ImageResult>((resolve) => {
+      const u: Upload = {
+        sessionId,
+        done: (r, auditReason) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(u.timer);
+          conn.uploads.delete(uploadId);
+          if (r.ok) this.audit(conn, sessionId, 'image', { ip, bytes: data.length, mime });
+          else this.audit(conn, sessionId, 'image_failed', { ip, bytes: data.length, mime, reason: auditReason });
+          resolve(r);
+        },
+      };
+      u.timer = setTimeout(() => u.done({ ok: false, status: 504, error: '等待本机保存图片超时' }, 'timeout'), this.opt.imageTimeoutMs ?? IMAGE_TIMEOUT);
+      conn.uploads.set(uploadId, u);
+    });
+
+    // 每块等写入 socket，缓冲积压时暂停，避免一次性把整张图塞进发送缓冲
+    const ws = conn.ws;
+    await sendWait(ws, { type: 'imageBegin', sessionId, uploadId, mime, size: data.length });
+    for (let off = 0; off < data.length && !settled; off += IMAGE_CHUNK) {
+      while (ws.bufferedAmount > IMAGE_BUFFERED && ws.readyState === ws.OPEN && !settled) await new Promise((r) => setTimeout(r, 20));
+      await sendWait(ws, { type: 'imageChunk', sessionId, uploadId, data: data.subarray(off, off + IMAGE_CHUNK).toString('base64') });
+    }
+    if (!settled) await sendWait(ws, { type: 'imageEnd', sessionId, uploadId });
+    return result;
+  }
+
+  /**
+   * 网页关闭远端会话：发 close，等 daemon 回 closeResult。不要求该会话正被接管；
+   * 会话退出由 daemon 照常通过 sessions 上报，接管（如有）按现有 detached 逻辑结束。
+   */
+  closeSession(machineId: string, sessionId: number, ip: string): Promise<CloseResult> {
+    const conn = this.conns.get(machineId);
+    if (!conn) return Promise.resolve({ ok: false, status: 409, error: '机器离线' });
+    if (!conn.caps.has('close')) return Promise.resolve({ ok: false, status: 409, error: '该机器的 Tether 不支持网页关闭会话（需 Tether 0.5.0+）' });
+    const requestId = randomUUID();
+    // 会话名称在发出前记下：成功后会话可能很快从列表中移除
+    const sessionName = this.machines.get(machineId)?.sessions.find((s) => s.id === sessionId)?.name ?? '';
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | undefined;
+      const c: Closing = {
+        sessionId,
+        done: (r, auditReason) => {
+          if (conn.closes.get(requestId) !== c) return;
+          conn.closes.delete(requestId);
+          clearTimeout(timer);
+          this.audit(conn, sessionId, r.ok ? 'close' : 'close_failed', { ip, sessionName, ...(r.ok ? {} : { reason: auditReason }) });
+          resolve(r);
+        },
+      };
+      conn.closes.set(requestId, c);
+      timer = setTimeout(() => c.done({ ok: false, status: 504, error: '等待本机关闭会话超时' }, 'timeout'), this.opt.closeTimeoutMs ?? CLOSE_TIMEOUT);
+      send(conn.ws, { type: 'close', sessionId, requestId });
+    });
+  }
+
+  /** 接管结束 / 断线：结束该会话（不指定则该连接全部）挂起的贴图 */
+  private failUploads(conn: Conn, sessionId?: number) {
+    for (const u of [...conn.uploads.values()]) {
+      if (sessionId === undefined || u.sessionId === sessionId) u.done({ ok: false, status: 409, error: '接管已结束' }, 'ended');
+    }
+  }
+
+  private audit(conn: Conn, sessionId: number, event: AuditRec['event'], extra: { ip?: string; reason?: string; bytes?: number; mime?: string; sessionName?: string } = {}) {
     const m = this.machines.get(conn.machineId);
     const rec: AuditRec = {
       time: new Date().toISOString(), event, machineId: conn.machineId, machineName: m?.name ?? '',
@@ -348,6 +514,14 @@ export class Agents extends EventEmitter {
 
 function send(ws: WebSocket, msg: object) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+}
+
+/** 发送并等数据写入 socket（连接已关闭或发送出错时也返回） */
+function sendWait(ws: WebSocket, msg: object) {
+  return new Promise<void>((resolve) => {
+    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg), () => resolve());
+    else resolve();
+  });
 }
 
 function fail(ws: WebSocket, code: string, message: string, closeCode: number) {

@@ -1,17 +1,20 @@
-// 审计：接管事件（协议第 7 节）、hub 自身更新事件与网页 token 管理事件，逐行追加到 HUB_DATA_DIR/audit.jsonl。
+// 审计：接管、贴图与网页关闭会话事件（协议第 7、8 节）、hub 自身更新事件与网页 token 管理事件，逐行追加到 HUB_DATA_DIR/audit.jsonl。
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 export interface AuditRec {
   time: string;
-  event: 'start' | 'denied' | 'end' | 'reclaimed' | 'disabled' | 'exited' | 'disconnected';
+  event: 'start' | 'denied' | 'end' | 'reclaimed' | 'disabled' | 'exited' | 'disconnected' | 'image' | 'image_failed' | 'close' | 'close_failed';
   machineId: string;
   machineName: string;
   sessionId: number;
   sessionName: string;
   ip?: string;
   reason?: string;
+  /** 贴图（image / image_failed）：图片字节数与类型；不记保存路径、不存图片 */
+  bytes?: number;
+  mime?: string;
 }
 
 /** hub 一键更新事件 */

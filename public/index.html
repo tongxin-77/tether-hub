@@ -84,11 +84,12 @@
     </header>
     <div class="term-body">
       <div id="t-banner"></div>
-      <div class="term" id="term-wrap"><div class="term-box" id="term-box"></div><button class="to-bottom" id="t-bottom" hidden>↓ 回到底部</button></div>
+      <div class="term" id="term-wrap"><div class="term-box" id="term-box"></div><button class="to-bottom" id="t-bottom" hidden>↓ 回到底部</button><div class="t-toast" id="t-toast" role="status" hidden></div></div>
       <div class="term-foot only-d" id="t-foot"></div>
     </div>
     <div class="keys" id="keys">
-      <button data-key="esc">Esc</button><button data-key="tab">Tab</button><button data-key="ctrl" aria-pressed="false">Ctrl</button><button data-key="up" aria-label="上">↑</button><button data-key="down" aria-label="下">↓</button><button data-key="left" aria-label="左">←</button><button data-key="right" aria-label="右">→</button>
+      <button data-key="esc">Esc</button><button data-key="tab">Tab</button><button data-key="ctrl" aria-pressed="false">Ctrl</button><button data-key="up" aria-label="上">↑</button><button data-key="down" aria-label="下">↓</button><button data-key="left" aria-label="左">←</button><button data-key="right" aria-label="右">→</button><button data-key="paste">粘贴</button><button data-key="image">图片</button>
+      <input type="file" id="img-file" accept="image/*" hidden>
     </div>
   </section>
 
@@ -115,6 +116,18 @@
         <div class="tok-list" id="tok-list"></div>
       </div>
     </div>
+  </div>
+
+  <!-- 接管终端：无法读取剪贴板时手动粘贴 -->
+  <div class="modal" id="paste" hidden>
+    <form class="modal-card" id="paste-form" role="dialog" aria-modal="true" aria-labelledby="paste-title">
+      <div class="card-head"><h3 id="paste-title">粘贴到终端</h3><button class="btn btn-ghost btn-icon modal-x" type="button" id="paste-close" aria-label="关闭"><i data-i="x"></i></button></div>
+      <div class="card-body">
+        <textarea class="input paste-ta" id="paste-text" placeholder="在此长按粘贴或输入文本" aria-label="要粘贴的文本"></textarea>
+        <div class="tok-tip">当前无法直接读取剪贴板；https 下可一键粘贴。</div>
+        <div class="upd-acts"><button class="btn" type="button" id="paste-cancel">取消</button><button class="btn btn-primary" type="submit">发送</button></div>
+      </div>
+    </form>
   </div>
 </div>
 </body>

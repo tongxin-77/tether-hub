@@ -1,4 +1,4 @@
-// Tether Hub Web 界面：登录、SSE 实时接收机器 / 会话状态并按主从布局渲染；远程接管终端（xterm.js）；审计日志。
+// Tether Hub Web 界面：登录、SSE 实时接收机器 / 会话状态并按主从布局渲染；远程接管终端（xterm.js，含回看历史、粘贴与贴图）；审计日志。
 // 版本与更新：顶栏版本按钮 / 新版本胶囊 + 更新面板（检查、一键更新、进度日志、重启后自动刷新）。
 // 机器 token：顶栏「Token」面板（列表、签发并一次性显示明文、页内二次确认吊销）。
 // 页面：#main 机器与会话（手机上为机器列表）、#detail 机器详情（仅手机两级页面用）、#term 接管终端、#audit 审计日志。
@@ -41,10 +41,17 @@ const EV = {
   disabled: ['接管被关闭', 't-warn', '本机关闭了允许接管'],
   exited: ['会话退出', '', '会话进程已退出'],
   disconnected: ['连接断开', '', '机器连接断开，接管结束'],
+  image: ['贴图', 't-pri', '网页上传图片，路径已输入到会话'],
+  image_failed: ['贴图失败', 't-err', '贴图失败'],
+  close: ['关闭会话', 't-warn', '网页关闭了远端会话'],
+  close_failed: ['关闭失败', 't-err', '网页关闭会话失败'],
 };
 const REASON = {
   reclaimed: '已被本地收回', disabled: '本机未允许接管', exited: '会话已退出', offline: '机器离线',
   not_found: '会话不存在或已退出', probe: '探测连接不支持接管',
+  // 贴图失败（image_failed）
+  not_taken_over: '会话未被 hub 接管', unsupported: '仅本地会话支持贴图', too_large: '图片过大', bad_type: '文件内容与图片类型不符',
+  io: '本机保存图片失败', timeout: '等待本机回复超时', ended: '上传期间接管结束', disconnected: '等待期间机器断开',
 };
 
 let state = null;
@@ -59,6 +66,13 @@ let termRef = null;
 let termRo = null;
 let ctrlOn = false; // 按键条粘滞 Ctrl
 let touch = null; // 终端区单指滑动 / 惯性状态
+/** 网页关闭会话：正在二次确认 / 请求中的会话（machineId/sessionId），以及最近一次失败 {key, text} */
+let closeAsk = null;
+let closeBusy = null;
+let closeErr = null;
+/** 机器详情顶部的一次性提示（如「会话已关闭」），几秒后消失 */
+let notice = '';
+let noticeTimer = 0;
 
 // ---- 工具 ----
 
@@ -181,6 +195,7 @@ function render() {
   renderAlert();
   renderMachines();
   renderDetail();
+  if (termRef) syncImgBtn();
 }
 
 function renderAlert() {
@@ -236,6 +251,42 @@ function takeBtn(m, s) {
   return `<button class="btn btn-sm${isWaiting(s) ? ' btn-primary' : ''}" data-take="${esc(m.machineId)}" data-sid="${s.id}">接管</button>`;
 }
 
+/** 运行中会话的「关闭」：页内二次确认；机器离线或 Tether 不支持时置灰并说明原因 */
+function closeBtn(m, s) {
+  if (s.status === 'exited') return '';
+  const key = `${m.machineId}/${s.id}`;
+  const err = closeErr && closeErr.key === key ? `<div class="cl-err">${esc(closeErr.text)}</div>` : '';
+  const why = !m.online ? '机器离线' : !(m.caps || []).includes('close') ? '网页关闭会话需 Tether 0.5.0+' : '';
+  if (why) return `<button class="btn btn-sm" disabled title="${why}">关闭</button>`;
+  if (closeBusy === key) return '<button class="btn btn-sm" disabled>关闭中…</button>';
+  const attrs = `data-m="${esc(m.machineId)}" data-sid="${s.id}"`;
+  if (closeAsk === key) {
+    return `<span class="cl-ask"><span class="cl-q">结束该会话进程？</span><button class="btn btn-sm" data-close-cancel>取消</button><button class="btn btn-sm btn-primary" data-close-ok ${attrs}>确认关闭</button></span>${err}`;
+  }
+  return `<button class="btn btn-sm" data-close ${attrs} title="结束该会话（本机需允许 hub 远程接管）">关闭</button>${err}`;
+}
+
+async function closeSession(machineId, sid) {
+  const key = `${machineId}/${sid}`;
+  closeAsk = null;
+  closeErr = null;
+  closeBusy = key;
+  renderDetail();
+  let text = '';
+  try {
+    const r = await fetch(`/api/session/close?machine=${encodeURIComponent(machineId)}&session=${sid}`, { method: 'POST' });
+    if (r.status === 401) return showLogin('登录已失效，请重新登录');
+    if (!r.ok) text = (await r.json().catch(() => ({}))).error || `关闭失败（${r.status}）`;
+  } catch {
+    text = '无法连接服务器';
+  } finally {
+    closeBusy = null;
+  }
+  // 成功后会话退出由 Tether 通过会话列表上报，页面随 SSE 更新
+  if (text) closeErr = { key, text };
+  renderDetail();
+}
+
 function renderDetail() {
   const m = selected();
   if (!m) {
@@ -248,7 +299,7 @@ function renderDetail() {
   const msg = (s) => (isWaiting(s) && s.claude.message ? `<div class="smsg">${esc(s.claude.message)}</div>` : '');
   const tip = (s) => esc(`${s.host ? `远程主机：${s.host}\n` : ''}目录：${s.cwd || ''}\n命令：${s.command || ''}`);
   const seen = m.online ? `上线于 ${ago(m.lastSeen)}` : ago(m.lastSeen);
-  $('detail').innerHTML = `
+  $('detail').innerHTML = `${notice ? `<div class="banner def notice">${ic('info')}<div><span class="bt">${esc(notice)}</span></div></div>` : ''}
     <div class="dhead">
       <button class="back" data-back aria-label="返回">${ic('chevL')}</button>
       <h2>${esc(mName(m))}</h2>
@@ -274,15 +325,25 @@ function renderDetail() {
           <td>${stCell(s.status)}</td><td>${claudeTag(s.claude)}</td>
           <td class="mono scmd">${s.host ? esc(s.host) : '<span class="muted">—</span>'}</td>
           <td class="tm" title="最后活动：${esc(fullTime(s.lastActivityAt))}"><div>${shortTime(s.startedAt)}</div><div>${ago(s.lastActivityAt)}</div></td>
-          <td class="r">${takeBtn(m, s)}</td></tr>`).join('')}
+          <td class="r"><div class="acts">${takeBtn(m, s)}${closeBtn(m, s)}</div></td></tr>`).join('')}
         </tbody></table></div>
       <div class="scards">${ss.map((s) => `<div class="scard ${rowCls(s)}">
         <div class="sc"><div class="r1"><span class="sname">${esc(sName(s))}</span>${s.claude ? claudeTag(s.claude) : ''}</div>
         <div class="r2">${esc(s.cwd)} › ${esc(s.command)}</div>${msg(s)}
         <div class="r3">${stCell(s.status)}<span>${ago(s.lastActivityAt)}</span>${s.host ? `<span class="mono">${esc(s.host)}</span>` : ''}</div></div>
-        ${takeBtn(m, s)}</div>`).join('')}</div>`
+        <div class="acts">${takeBtn(m, s)}${closeBtn(m, s)}</div></div>`).join('')}</div>`
       : `<div class="empty">${m.online ? '该机器暂无会话' : '离线，暂无会话信息'}</div>`}
     </div>`;
+}
+
+function showNotice(text) {
+  notice = text;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    notice = '';
+    renderDetail();
+  }, 5000);
+  renderDetail();
 }
 
 function pick(id) {
@@ -356,6 +417,7 @@ function setTermState(kind, reason) {
   const ended = kind === 'ended';
   $('term-wrap').classList.toggle('ro', ended);
   $('keys').classList.toggle('dis', kind !== 'active');
+  syncImgBtn();
   $('t-banner').innerHTML = '';
   if (kind === 'connecting') {
     $('t-tag').innerHTML = '<span class="tag"><i class="dot info"></i>连接中…</span>';
@@ -391,7 +453,7 @@ function connectTerm() {
 
   const t = (term = new Terminal({
     fontFamily: '"Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace', fontSize: isM() ? 12 : 14,
-    cursorBlink: true, scrollback: 5000, theme: termTheme(),
+    cursorBlink: true, scrollback: 10000, theme: termTheme(),
   }));
   const fit = new FitAddon.FitAddon();
   t.loadAddon(fit);
@@ -438,10 +500,12 @@ function connectTerm() {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'snapshot') {
-      // 先按快照尺寸写入避免错行，再适配窗口并把新尺寸发给 daemon
+      // 先按快照尺寸写入避免错行，再适配窗口并把新尺寸发给 daemon；
+      // history（Tether 0.5.0+）先写入：历史行 + rows 个换行把它们推进 scrollback，备用屏时末尾为 ?1049h，快照随后写入当前屏
       sizing = true;
       t.reset();
       if (msg.cols > 0 && msg.rows > 0) t.resize(msg.cols, msg.rows);
+      if (msg.history) t.write(fromB64(msg.history));
       t.write(fromB64(msg.data), () => {
         sizing = false;
         ready = true;
@@ -453,6 +517,11 @@ function connectTerm() {
       t.focus();
     } else if (msg.type === 'output') {
       t.write(fromB64(msg.data));
+    } else if (msg.type === 'detached' && msg.reason === 'session_closed') {
+      // 会话被网页关闭（随后从会话列表消失）：关闭终端页，回到机器页提示
+      ended = true;
+      showNotice(`会话「${ref.name}」已关闭`);
+      leaveTerm();
     } else if (msg.type === 'detached' || msg.type === 'denied') {
       end(msg.type === 'denied' && msg.reason === 'disabled' ? 'denied' : msg.reason);
     }
@@ -475,6 +544,8 @@ function disposeTerm() {
   touch = null;
   $('t-bottom').hidden = true;
   setCtrl(false);
+  toast('');
+  closePaste();
 }
 
 /** 离开终端页即断开接管 */
@@ -489,6 +560,8 @@ function closeTerm() {
 // Ctrl 为一次性粘滞键：按下高亮，下一个输入字符转为控制字符后自动取消，再按一下取消；Ctrl+方向键发 CSI 1;5 x
 const KEYS = { esc: '\x1b', tab: '\t' };
 const ARROW = { up: 'A', down: 'B', right: 'C', left: 'D' };
+/** 方向键序列：遵循应用光标键模式（DECCKM） */
+const arrow = (k) => `${term.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b['}${ARROW[k]}`;
 function setCtrl(on) {
   ctrlOn = on;
   const b = $('keys').querySelector('[data-key="ctrl"]');
@@ -508,13 +581,127 @@ $('keys').addEventListener('click', (e) => {
   if (!b || !term) return;
   const k = b.dataset.key;
   if (k === 'ctrl') return setCtrl(!ctrlOn);
+  if (k === 'paste') return pasteKey();
+  if (k === 'image') return imgBlock() ? toast(imgBlock(), 'err', 4000) : $('img-file').click();
   let seq = KEYS[k];
   if (ARROW[k] && ctrlOn) {
     seq = `\x1b[1;5${ARROW[k]}`;
     setCtrl(false);
-  } else if (ARROW[k]) seq = `${term.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b['}${ARROW[k]}`;
+  } else if (ARROW[k]) seq = arrow(k);
   term.input(seq, true);
 });
+
+// 粘贴与贴图：「粘贴」键在 https（安全上下文）下直接读剪贴板，否则打开粘贴弹层手动粘贴；
+// 剪贴板只有图片（没有文本）时按贴图处理：POST /api/term/image，由 Tether 保存为临时文件并把路径输入到会话（需 Tether 0.5.0+，仅本地会话）
+const IMG_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const MAX_IMG = 10 * 1024 * 1024;
+let imgBusy = false;
+let toastTimer = 0;
+
+/** 当前接管的会话不能贴图的原因；可以时返回空串 */
+function imgBlock() {
+  const m = termRef && machines().find((x) => x.machineId === termRef.machineId);
+  const s = m && m.sessions.find((x) => x.id === termRef.sessionId);
+  if (!m || !m.online) return '机器离线';
+  if (!(m.caps || []).includes('image')) return '贴图需 Tether 0.5.0+';
+  if (s && s.host) return 'SSH 会话不支持贴图，仅本地会话可用';
+  return '';
+}
+function syncImgBtn() {
+  const b = $('keys').querySelector('[data-key="image"]');
+  const why = imgBlock();
+  b.classList.toggle('off', !!why);
+  b.title = why || '选择图片上传，路径输入到会话';
+}
+
+/** 终端顶部提示条；ms 为 0 时一直显示，text 为空即隐藏 */
+function toast(text, kind = '', ms = 0) {
+  const el = $('t-toast');
+  clearTimeout(toastTimer);
+  el.textContent = text;
+  el.className = `t-toast ${kind}`;
+  el.hidden = !text;
+  if (ms) toastTimer = setTimeout(() => (el.hidden = true), ms);
+}
+
+async function sendImage(blob) {
+  const why = imgBlock();
+  if (why) return toast(why, 'err', 4000);
+  if (imgBusy) return toast('上一张图片还在上传', 'err', 3000);
+  if (!IMG_TYPES.includes(blob.type)) return toast('仅支持 PNG / JPEG / GIF / WebP 图片', 'err', 4000);
+  if (blob.size > MAX_IMG) return toast('图片过大（上限 10 MB）', 'err', 4000);
+  const ref = termRef;
+  imgBusy = true;
+  toast('正在上传图片…');
+  let ok = false;
+  let msg;
+  try {
+    const r = await fetch(`/api/term/image?machine=${encodeURIComponent(ref.machineId)}&session=${ref.sessionId}`, {
+      method: 'POST', headers: { 'Content-Type': blob.type }, body: blob,
+    });
+    if (r.status === 401) {
+      imgBusy = false;
+      return showLogin('登录已失效，请重新登录');
+    }
+    const body = await r.json().catch(() => ({}));
+    ok = r.ok;
+    msg = ok ? '已插入图片路径' : body.error || `上传失败（${r.status}）`;
+  } catch {
+    msg = '上传失败：无法连接服务器';
+  }
+  imgBusy = false;
+  if (termRef === ref) toast(msg, ok ? 'ok' : 'err', ok ? 2500 : 5000);
+}
+
+async function pasteKey() {
+  setCtrl(false);
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      if (navigator.clipboard.read) {
+        const items = await navigator.clipboard.read();
+        const text = items.find((i) => i.types.includes('text/plain'));
+        if (text) return term && term.paste(await (await text.getType('text/plain')).text());
+        for (const i of items) {
+          const type = i.types.find((t) => t.startsWith('image/'));
+          if (type) return sendImage(await i.getType(type));
+        }
+        return toast('剪贴板为空', '', 2500);
+      }
+      return term && term.paste(await navigator.clipboard.readText());
+    } catch {} // 未授权或不支持：退回弹层
+  }
+  $('paste-text').value = '';
+  $('paste').hidden = false;
+  $('paste-text').focus();
+}
+const closePaste = () => ($('paste').hidden = true);
+$('paste-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = $('paste-text').value;
+  closePaste();
+  if (!term || !v) return;
+  setCtrl(false);
+  term.paste(v); // 与键盘粘贴相同：换行转回车，程序开启括号粘贴模式时自动包裹
+});
+$('paste-close').addEventListener('click', closePaste);
+$('paste-cancel').addEventListener('click', closePaste);
+$('paste').addEventListener('click', (e) => e.target === $('paste') && closePaste());
+document.addEventListener('keydown', (e) => e.key === 'Escape' && !$('paste').hidden && closePaste());
+$('img-file').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) sendImage(f);
+});
+// 桌面 Ctrl+V 贴截图：捕获阶段先于 xterm 拦下只含图片的剪贴板；带文本的粘贴照常交给 xterm
+$('term-box').addEventListener('paste', (e) => {
+  const items = [...(e.clipboardData ? e.clipboardData.items : [])];
+  const img = items.find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+  if (!term || !img || items.some((i) => i.type === 'text/plain')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  sendImage(img.getAsFile());
+}, true);
+
 $('term-wrap').addEventListener('click', () => term && term.focus());
 $('t-bottom').addEventListener('mousedown', (e) => e.preventDefault());
 $('t-bottom').addEventListener('click', (e) => {
@@ -544,7 +731,8 @@ tbox.addEventListener('touchstart', (e) => {
   touch = null;
   if (!term || e.touches.length !== 1) return;
   const p = e.touches[0];
-  touch = { x: p.clientX, y0: p.clientY, cy: p.clientY, t: e.timeStamp, v: 0, acc: 0, moving: false };
+  // stop：这次触摸是为了按停惯性滚动，不当作轻点
+  touch = { x: p.clientX, y0: p.clientY, cy: p.clientY, t: e.timeStamp, v: 0, acc: 0, moving: false, stop: performance.now() - coastAt < 100 };
 }, { passive: true });
 tbox.addEventListener('touchmove', (e) => {
   if (!touch || !term || e.touches.length !== 1) return;
@@ -561,6 +749,8 @@ tbox.addEventListener('touchmove', (e) => {
 }, { passive: false });
 tbox.addEventListener('touchend', (e) => {
   const s = touch;
+  // 轻点选项行：不让后续的兼容鼠标事件聚焦终端（避免弹出键盘遮挡）
+  if (s && !s.moving && !s.stop && term && tapOption(e.changedTouches[0])) return e.preventDefault();
   // 惯性只用于滚动历史；停顿后再松手（> 80ms 无移动）不甩出去
   if (!s || !s.moving || !term || term.buffer.active.type !== 'normal' || e.timeStamp - s.t > 80) return;
   let v = s.v;
@@ -570,12 +760,65 @@ tbox.addEventListener('touchend', (e) => {
     v *= Math.pow(0.95, (now - last) / 16);
     if (Math.abs(v) < 0.05) return;
     touchScroll(v * (now - last));
-    last = now;
+    last = coastAt = now;
     requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
 });
 tbox.addEventListener('touchcancel', () => (touch = null));
+
+// 触屏轻点 Claude Code 等程序弹出的编号选项（❯ 1. Yes / 2. … / 3. No）：从当前选中项用 ↑ / ↓ 移到被点项再发回车，
+// 不依赖数字键直接选择；点在其他位置保持原行为（聚焦、弹键盘）。桌面鼠标点击不处理
+let coastAt = 0; // 惯性滚动最近一帧的时间
+const OPT_RE = /^\s*([❯>]\s*)?(\d+)\.\s+(?=\S)/;
+/** 视口内最靠下的一组编号选项 [{n, sel, start, end}]（buffer 绝对行号；折行或缩进到选项文字列的续行算该项）；编号从 1 连续、至少 2 项、恰一项带选中标记，否则 null */
+function findOptions() {
+  const b = term.buffer.active;
+  let best = null;
+  let run = null;
+  for (let y = b.viewportY; y < b.viewportY + term.rows; y++) {
+    const line = b.getLine(y);
+    if (!line) break;
+    const text = line.translateToString(true);
+    const cur = run && run[run.length - 1];
+    const m = line.isWrapped ? null : OPT_RE.exec(text);
+    if (m) {
+      const it = { n: Number(m[2]), sel: !!m[1], start: y, end: y, col: m[0].length };
+      if (cur && it.n === cur.n + 1) run.push(it);
+      else run = it.n === 1 ? [it] : null;
+    } else if (cur && (line.isWrapped || (text.trim() && text.length - text.trimStart().length >= cur.col))) {
+      cur.end = y;
+      continue;
+    } else run = null;
+    if (run && run.length >= 2 && run.filter((o) => o.sel).length === 1) best = run;
+  }
+  return best && best.filter((o) => o.sel).length === 1 ? best : null;
+}
+/** 轻点落在选项行上则发送选择并返回 true */
+function tapOption(p) {
+  const b = term.buffer.active;
+  // 滚离底部时视口里可能是历史中的旧列表；接管未生效时不处理
+  if (!p || b.viewportY !== b.baseY || $('keys').classList.contains('dis')) return false;
+  const rect = term.element.querySelector('.xterm-screen').getBoundingClientRect();
+  const h = rect.height / term.rows;
+  const row = Math.floor((p.clientY - rect.top) / h);
+  if (p.clientX < rect.left || p.clientX > rect.right || row < 0 || row >= term.rows) return false;
+  const opts = findOptions();
+  const y = b.viewportY + row;
+  const target = opts && opts.find((o) => y >= o.start && y <= o.end);
+  if (!target) return false;
+  const d = target.n - opts.find((o) => o.sel).n;
+  setCtrl(false);
+  term.input(arrow(d > 0 ? 'down' : 'up').repeat(Math.abs(d)) + '\r', true);
+  // 短暂高亮被点的选项（叠加层，不改终端内容）
+  const wrap = $('term-wrap').getBoundingClientRect();
+  const hit = document.createElement('div');
+  hit.className = 't-hit';
+  hit.style.cssText = `left:${rect.left - wrap.left}px;width:${rect.width}px;top:${rect.top - wrap.top + (target.start - b.viewportY) * h}px;height:${(target.end - target.start + 1) * h}px`;
+  $('term-wrap').appendChild(hit);
+  setTimeout(() => hit.remove(), 500);
+  return true;
+}
 const leaveTerm = () => (location.hash = isM() && selected() ? '#detail' : '#main');
 $('t-close').addEventListener('click', leaveTerm);
 $('t-close-m').addEventListener('click', leaveTerm);
@@ -617,7 +860,8 @@ function renderAudit() {
   auditPage = Math.min(auditPage, pages - 1);
   const shown = rows.slice(auditPage * PAGE, (auditPage + 1) * PAGE);
   const tag = (e) => `<span class="tag ${EV[e] ? EV[e][1] : ''}"><span class="ev">${esc(e)}</span>${EV[e] ? EV[e][0] : ''}</span>`;
-  const desc = (a) => esc(a.to ? `${a.from} → ${a.to}${a.reason ? `：${a.reason}` : ''}`
+  const desc = (a) => esc(a.event === 'image' ? `${a.mime || ''} · ${Math.max(1, Math.round((a.bytes || 0) / 1024))} KB`
+    : a.to ? `${a.from} → ${a.to}${a.reason ? `：${a.reason}` : ''}`
     : a.tokenName ? `${EV[a.event] ? EV[a.event][2] : ''}「${a.tokenName}」`
     : a.reason ? REASON[a.reason] || a.reason : EV[a.event] ? EV[a.event][2] : '');
   const sess = (a) => (a.sessionId === undefined ? '<span class="muted">—</span>' : `${esc(a.sessionName || '会话')} <span class="muted">#${a.sessionId}</span>`);
@@ -886,6 +1130,18 @@ $('m-search').addEventListener('input', renderMachines);
 document.addEventListener('click', (e) => {
   const take = e.target.closest('[data-take]');
   if (take) return openTerm(take.dataset.take, Number(take.dataset.sid));
+  const cl = e.target.closest('[data-close]');
+  if (cl) {
+    closeAsk = `${cl.dataset.m}/${cl.dataset.sid}`;
+    closeErr = null;
+    return renderDetail();
+  }
+  if (e.target.closest('[data-close-cancel]')) {
+    closeAsk = null;
+    return renderDetail();
+  }
+  const ok = e.target.closest('[data-close-ok]');
+  if (ok) return closeSession(ok.dataset.m, Number(ok.dataset.sid));
   const p = e.target.closest('[data-pick]');
   if (p) return pick(p.dataset.pick);
   if (e.target.closest('[data-back]')) return (location.hash = '#main');

@@ -192,6 +192,7 @@ a{color:var(--primary);text-decoration:none}
 
 .detail{flex:1;min-width:0;overflow:auto;padding:4px 2px 0}
 .dhead{display:flex;align-items:center;gap:10px;margin:2px 4px 18px}
+.detail .notice{margin:0 4px 12px}
 .dhead h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dhead .right{margin-left:auto;font-size:13px;color:var(--text-3);white-space:nowrap}
 .back{display:none}
@@ -202,6 +203,11 @@ a{color:var(--primary);text-decoration:none}
 .sname{font-weight:500}
 .scmd{font-family:var(--mono);font-size:12px;color:var(--text-3)}
 .smsg{font-size:12px;color:var(--warning-ink);margin-top:2px}
+/* 会话操作：接管 / 关闭（含页内二次确认与失败原因） */
+.acts{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px}
+.cl-ask{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px}
+.cl-q{font-size:12px;color:var(--warning-ink)}
+.cl-err{flex-basis:100%;font-size:12px;color:var(--warning-ink);text-align:right;max-width:220px;margin-left:auto}
 .cwd{font-family:var(--mono);font-size:12px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
 .tm{white-space:nowrap;font-size:12px;color:var(--text-2)}
 .tm div+div{color:var(--text-3)}
@@ -251,15 +257,25 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
 .to-bottom{position:absolute;right:16px;bottom:16px;z-index:5;height:32px;padding:0 14px;border:0;border-radius:16px;background:var(--surface);color:var(--text);font-size:13px;box-shadow:var(--shadow);cursor:pointer}
 .to-bottom:hover{background:var(--hover)}
 .term.ro .term-box{opacity:.55}
+/* 轻点选项行的高亮反馈 */
+.t-hit{position:absolute;z-index:4;pointer-events:none;border-radius:4px;background:var(--t-sel);animation:t-hit .5s ease-out forwards}
+@keyframes t-hit{to{opacity:0}}
+/* 贴图 / 粘贴状态提示条：终端顶部居中 */
+.t-toast{position:absolute;left:50%;top:12px;z-index:6;transform:translateX(-50%);max-width:calc(100% - 24px);padding:7px 14px;border-radius:10px;background:var(--surface);color:var(--text);font-size:13px;box-shadow:var(--shadow);overflow-wrap:anywhere}
+.t-toast.err{background:var(--warning-soft);color:var(--warning-ink)}
+.t-toast.ok{color:var(--pri-ink)}
+.paste-ta{height:auto;min-height:120px;padding:8px 12px;font:13px/1.5 var(--mono);resize:vertical}
 .term-foot{flex:none;display:flex;gap:16px;font-size:12px;color:var(--text-3);padding:0 4px}
 .term-foot .end{margin-left:auto}
 .keys{display:none}
 /* 手机或触屏设备（如平板）显示快捷键栏，位于终端下方、软键盘上方 */
 @media (max-width:768px),(pointer:coarse){
   .keys{display:flex;flex:none;gap:6px;padding:6px 8px calc(6px + env(safe-area-inset-bottom));background:var(--t-keys)}
-  .keys button{flex:1 1 0;min-width:0;height:44px;border:0;border-radius:10px;background:var(--t-key);color:#efe6da;font:13px var(--mono);cursor:pointer;touch-action:manipulation}
+  .keys button{flex:1 1 0;min-width:0;height:44px;padding:0;border:0;border-radius:10px;background:var(--t-key);color:#efe6da;font:13px var(--mono);white-space:nowrap;cursor:pointer;touch-action:manipulation}
   .keys button:active{background:#544840}
   .keys button.on{background:var(--primary);color:#fff}
+  /* 当前不可用（如 Tether 版本过旧），仍可点击以提示原因 */
+  .keys button.off{opacity:.4}
   .keys.dis button{opacity:.4;pointer-events:none}
   .to-bottom{height:40px;right:12px;bottom:12px;border-radius:20px}
 }
@@ -331,7 +347,10 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
   .scards{display:block;padding:6px}
   .scard{display:flex;align-items:center;gap:12px;padding:12px 10px;border-radius:12px;min-height:64px}
   .scard.need{background:var(--warning-soft)}
-  .scard .sc{flex:1;min-width:0}
+  .scard .sc{flex:1 1 140px;min-width:0}
+  /* 关闭的二次确认 / 失败原因较宽时换到下一行 */
+  .scard{flex-wrap:wrap}
+  .scard .acts{margin-left:auto}
   .scard .r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .scard .r2{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
   .scard .r3{font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:3px}
