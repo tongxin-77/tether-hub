@@ -233,7 +233,7 @@ function claudeTag(c) {
   switch (c.state) {
     case 'waiting': return `<span class="tag t-warn">${ic('alert', 'ic-sm')}等待确认</span>`;
     case 'thinking': return '<span class="tag"><i class="dot info"></i>思考中</span>';
-    case 'background': return `<span class="tag"><i class="dot pur"></i>子代理运行中${c.count ? ` ×${c.count}` : ''}</span>`;
+    case 'background': return `<span class="tag"><i class="dot pur"></i>后台运行中${c.count ? ` ×${c.count}` : ''}</span>`;
     case 'done': return '<span class="tag">已完成</span>';
     case 'idle': return '<span class="tag">空闲</span>';
     default: return `<span class="tag">${esc(c.state)}</span>`;
@@ -241,7 +241,7 @@ function claudeTag(c) {
 }
 const stCell = (st) => ({
   running: '<span class="st"><i class="dot ok"></i>运行中</span>',
-  waiting: '<span class="st"><i class="dot"></i>等待中</span>',
+  waiting: '<span class="st" title="有新结果或提醒，会话里还没有操作过"><i class="dot"></i>待查看</span>',
   exited: '<span class="st muted"><i class="dot"></i>已退出</span>',
 })[st] || `<span class="st">${esc(st)}</span>`;
 
