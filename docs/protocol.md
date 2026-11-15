@@ -10,8 +10,8 @@
   - 客户端连接路径固定为 `/agent`，即 `wss://<host>:<port>/agent`。
 - **TLS**：默认只允许 `wss://`。`ws://` 明文仅在客户端勾选「允许明文连接（仅限局域网调试）」时可用；hub 未配置证书时须显式开启 `HUB_INSECURE=1` 才以明文监听。
 - **认证**：WebSocket 握手请求带 HTTP 头 `Authorization: Bearer <token>`。token 无效时 hub 以 HTTP 401 拒绝握手（不升级）。
-- **心跳**：hub 每 25 s 发 WebSocket ping 帧；客户端 60 s 内未收到任何帧（含 ping）即判定断线。客户端回 pong 由 WebSocket 库自动完成。
-- **重连**：客户端断线后指数退避重连：1 s、2 s、4 s … 上限 60 s，加 ±20% 抖动；连接成功并收到 `welcome` 后退避归零。401 / `proto` 不兼容时不自动重连，状态显示失败原因，等用户修改设置。
+- **心跳**：hub 每 25 s 发 WebSocket ping 帧，一个周期内未收到 pong 即断开该连接；客户端 60 s 内未收到任何帧（含 ping）即判定断线。客户端回 pong 由 WebSocket 库自动完成。
+- **重连**：客户端断线后指数退避重连：1 s、2 s、4 s … 上限 60 s，加 ±20% 抖动；连接成功并收到 `welcome` 后退避归零。401、`proto_unsupported`、`replaced` 时不自动重连，状态显示失败原因，等用户修改设置或手动重新启用（`replaced` 通常意味着两台机器的 `machine-id` 相同，例如克隆的虚拟机；自动重连会导致两边互相顶替）。
 
 ## 2. 消息
 
@@ -28,6 +28,7 @@
 - `machineId`：稳定机器 ID。daemon 首次需要时生成 UUID v4，保存在 `%APPDATA%\tether\machine-id`（dev 构建为 `tether-dev`），之后不变。
 - `machineName`：`COMPUTERNAME` 环境变量。
 - `version`：Tether 版本。
+- 字段约束：`proto` 必须是数字（缺失或非数字按 `bad_hello`）；`machineId` 1–64 字符，`machineName`、`version` 不超过 256 字符，超出按 `bad_hello`。
 
 **sessions**（收到 `welcome` 后立即发一次；之后会话列表或其中任一字段变化时发送全量，500 ms 防抖）
 
