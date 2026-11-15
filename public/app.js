@@ -1,9 +1,17 @@
-// Tether Hub Web 界面：登录、SSE 实时接收机器 / 会话状态并渲染。
+// Tether Hub Web 界面：登录、SSE 实时接收机器 / 会话状态并渲染；远程接管终端（xterm.js）；接管审计列表。
 'use strict';
 
 const $ = (id) => document.getElementById(id);
 const STATUS = { running: '运行中', waiting: '等待中', exited: '已退出' };
 const CLAUDE = { idle: 'Claude', thinking: '思考中', waiting: '等待确认', background: '子代理运行中', done: '已完成' };
+const END_REASON = {
+  reclaimed: '已被本地收回', disabled: '本机未允许接管', exited: '会话已退出', offline: '机器离线',
+  not_found: '会话不存在或已退出', probe: '探测连接不支持接管',
+};
+const AUDIT = {
+  start: '开始接管', denied: '接管被拒绝', end: '结束接管', reclaimed: '被本地收回',
+  disabled: '本机关闭接管', exited: '会话退出', disconnected: '机器断线',
+};
 
 let state = null;
 let es = null;
@@ -41,6 +49,7 @@ function showMain() {
   $('login').hidden = true;
   $('main').hidden = false;
   startEvents();
+  loadAudit();
 }
 
 function stopEvents() {
@@ -115,12 +124,12 @@ function renderMachine(m) {
     return card;
   }
   const list = el('ul', 'sessions');
-  for (const s of m.sessions) list.append(renderSession(s));
+  for (const s of m.sessions) list.append(renderSession(m, s));
   card.append(list);
   return card;
 }
 
-function renderSession(s) {
+function renderSession(m, s) {
   const li = el('li', `session${isWaiting(s) ? ' waiting' : ''}`);
   const name = el('div', 's-name');
   name.append(el('span', '', s.name || `会话 ${s.id}`));
@@ -134,6 +143,11 @@ function renderSession(s) {
     pills.append(el('span', `pill cl cl-${s.claude.state}`, text));
   }
   pills.append(el('span', `pill st-${s.status}`, STATUS[s.status] || s.status));
+  if (m.online && s.status !== 'exited') {
+    const btn = el('button', 'ghost small', '接管');
+    btn.addEventListener('click', () => openTerm(m, s));
+    pills.append(btn);
+  }
   const t = el('span', 's-time', ago(s.lastActivityAt));
   t.title = `最后活动：${fullTime(s.lastActivityAt)}`;
   side.append(pills, t);
@@ -145,6 +159,131 @@ function renderSession(s) {
   if (isWaiting(s) && s.claude.message) li.append(el('div', 's-msg', s.claude.message));
   return li;
 }
+
+// ---- 远程接管终端：浏览器 ↔ hub 的 /api/term WebSocket，内容为 base64 透传 ----
+
+let term = null;
+let termWs = null;
+let onWinResize = null;
+
+const utf8 = new TextEncoder();
+const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+function toB64(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+
+function setTermStatus(text, ended) {
+  $('term-status').textContent = text;
+  $('term-status').className = `term-status${ended ? ' ended' : ''}`;
+}
+
+function openTerm(m, s) {
+  closeTerm();
+  $('term-title').textContent = `${m.name || m.machineId} · ${s.name || `会话 ${s.id}`}`;
+  setTermStatus('连接中…');
+  $('term').hidden = false;
+
+  const t = (term = new Terminal({ fontFamily: 'Cascadia Mono, Consolas, monospace', fontSize: 14, cursorBlink: true, scrollback: 5000 }));
+  const fit = new FitAddon.FitAddon();
+  t.loadAddon(fit);
+  t.open($('term-box'));
+  fit.fit();
+  // Ctrl+C 有选区时复制、Ctrl+V 粘贴：交给浏览器默认行为，由 xterm 的 copy / paste 事件处理（多行粘贴、括号粘贴模式）
+  t.attachCustomKeyEventHandler((e) => !(e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.shiftKey
+    && ((e.key === 'c' && t.hasSelection()) || e.key === 'v')));
+
+  const ws = (termWs = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/term?machine=${encodeURIComponent(m.machineId)}&session=${s.id}`));
+  let ready = false;
+  let ended = false;
+  const send = (msg) => ready && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+  t.onData((d) => send({ type: 'input', data: toB64(utf8.encode(d)) }));
+  t.onBinary((d) => send({ type: 'input', data: btoa(d) }));
+  t.onResize(({ cols, rows }) => send({ type: 'resize', cols, rows }));
+  onWinResize = () => fit.fit();
+  window.addEventListener('resize', onWinResize);
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'snapshot') {
+      // 先按快照尺寸写入避免错行，再适配窗口并把新尺寸发给 daemon
+      t.reset();
+      if (msg.cols > 0 && msg.rows > 0) t.resize(msg.cols, msg.rows);
+      t.write(fromB64(msg.data), () => {
+        ready = true;
+        fit.fit();
+      });
+      setTermStatus('接管中');
+      t.focus();
+    } else if (msg.type === 'output') {
+      t.write(fromB64(msg.data));
+    } else if (msg.type === 'detached' || msg.type === 'denied') {
+      ended = true;
+      ready = false;
+      setTermStatus(END_REASON[msg.reason] || `已结束（${msg.reason}）`, true);
+      loadAudit();
+    }
+  };
+  ws.onclose = () => {
+    ready = false;
+    if (!ended) setTermStatus('连接已断开', true);
+  };
+}
+
+function closeTerm() {
+  if (termWs) {
+    termWs.onclose = null;
+    termWs.close();
+    termWs = null;
+  }
+  if (term) term.dispose();
+  term = null;
+  if (onWinResize) window.removeEventListener('resize', onWinResize);
+  onWinResize = null;
+  if (!$('term').hidden) {
+    $('term').hidden = true;
+    loadAudit();
+  }
+}
+
+// ---- 接管审计 ----
+
+async function loadAudit() {
+  let rows;
+  try {
+    const r = await fetch('/api/audit?limit=50');
+    if (!r.ok) return;
+    rows = await r.json();
+  } catch {
+    return;
+  }
+  const body = $('audit');
+  body.replaceChildren();
+  if (!rows.length) {
+    const td = el('td', 'audit-empty', '暂无接管记录');
+    td.colSpan = 5;
+    const tr = el('tr');
+    tr.append(td);
+    body.append(tr);
+    return;
+  }
+  for (const a of rows) {
+    const tr = el('tr', `ev-${a.event}`);
+    const what = AUDIT[a.event] || a.event;
+    tr.append(
+      el('td', 'a-time', fullTime(Date.parse(a.time))),
+      el('td', 'a-event', a.reason ? `${what}（${END_REASON[a.reason] || a.reason}）` : what),
+      el('td', '', a.machineName || a.machineId),
+      el('td', '', `${a.sessionName || '会话'} #${a.sessionId}`),
+      el('td', 'a-ip', a.ip || ''),
+    );
+    body.append(tr);
+  }
+}
+
+$('term-close').addEventListener('click', closeTerm);
+$('audit-refresh').addEventListener('click', loadAudit);
 
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -167,6 +306,7 @@ $('login-form').addEventListener('submit', async (e) => {
 $('logout').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' }).catch(() => {});
   state = null;
+  closeTerm();
   showLogin();
 });
 

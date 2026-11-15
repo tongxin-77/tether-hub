@@ -34,3 +34,11 @@ test('首页可访问并带 CSP', async () => {
   assert.match(r.headers.get('content-security-policy')!, /default-src 'self'/);
   assert.match(await r.text(), /Tether Hub/);
 });
+
+test('xterm 静态资源由 hub 提供', async () => {
+  for (const p of ['/xterm/xterm.js', '/xterm/xterm.css', '/xterm/addon-fit.js']) {
+    const r = await fetch(`${ctx.base}${p}`);
+    assert.equal(r.status, 200, p);
+    assert.ok((await r.text()).length > 100);
+  }
+});

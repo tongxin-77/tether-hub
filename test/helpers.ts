@@ -41,8 +41,8 @@ export class Client {
   opened: Promise<void>;
   closed: Promise<{ code: number; reason: string }>;
 
-  constructor(url: string, token?: string) {
-    this.ws = new WebSocket(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  constructor(url: string, token?: string, headers: Record<string, string> = {}) {
+    this.ws = new WebSocket(url, { headers: token ? { Authorization: `Bearer ${token}`, ...headers } : headers });
     this.ws.on('message', (d) => this.messages.push(JSON.parse(d.toString())));
     this.opened = new Promise((res, rej) => {
       this.ws.once('open', () => res());
@@ -57,7 +57,7 @@ export class Client {
   }
 
   hello(machineId = 'm-1', extra: object = {}) {
-    this.send({ type: 'hello', proto: 1, machineId, machineName: 'DEV-PC', version: '0.4.0', ...extra });
+    this.send({ type: 'hello', proto: 2, machineId, machineName: 'DEV-PC', version: '0.4.0', ...extra });
   }
 
   async next(type: string, timeout = 3000): Promise<any> {

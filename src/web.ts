@@ -1,26 +1,35 @@
-// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话变化。
+// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话变化，/api/term 终端接管 WebSocket。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
-import type { Agents, Machine } from './agents.js';
+import type { Duplex } from 'node:stream';
+import { WebSocketServer, type WebSocket } from 'ws';
+import { MAX_MESSAGE, reject, type Agents, type Machine } from './agents.js';
+import { readAudit } from './audit.js';
 
 const COOKIE = 'hub_session';
 const SESSION_TTL = 7 * 24 * 3600_000;
 export const MAX_FAILS = 5;
 export const LOCK_MS = 5 * 60_000;
 
+/** 路径相对于 publicDir；xterm 由 node_modules 提供 */
 const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
+  '/xterm/xterm.js': ['../node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript; charset=utf-8'],
+  '/xterm/xterm.css': ['../node_modules/@xterm/xterm/css/xterm.css', 'text/css; charset=utf-8'],
+  '/xterm/addon-fit.js': ['../node_modules/@xterm/addon-fit/lib/addon-fit.js', 'text/javascript; charset=utf-8'],
 };
 
 export interface WebOptions {
   adminPassword: string;
   secure: boolean;
   publicDir: string;
+  /** 审计日志所在目录（HUB_DATA_DIR） */
+  dataDir: string;
   hubVersion: string;
   log: (msg: string) => void;
 }
@@ -42,6 +51,9 @@ export class Web {
   private sessions = new Map<string, number>();
   private fails = new Map<string, { count: number; until: number }>();
   private clients = new Set<ServerResponse>();
+  /** 终端 WebSocket → 上个心跳周期内是否收到 pong */
+  private terms = new Map<WebSocket, boolean>();
+  private wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE });
   private pwHash: Buffer;
   private pushTimer?: NodeJS.Timeout;
   private beat: NodeJS.Timeout;
@@ -57,6 +69,13 @@ export class Web {
     });
     this.beat = setInterval(() => {
       for (const res of this.clients) res.write(': ping\n\n');
+      for (const [ws, alive] of this.terms) {
+        if (!alive) ws.terminate();
+        else {
+          this.terms.set(ws, false);
+          ws.ping();
+        }
+      }
     }, 20_000);
   }
 
@@ -75,6 +94,10 @@ export class Web {
       if (route === 'GET /api/me') return json(res, 200, { ok: true });
       if (route === 'GET /api/state') return json(res, 200, snapshot(this.agents, this.opt.hubVersion));
       if (route === 'GET /api/events') return this.events(req, res);
+      if (route === 'GET /api/audit') {
+        const n = Number(url.searchParams.get('limit') ?? 100);
+        return json(res, 200, readAudit(this.opt.dataDir, Number.isInteger(n) && n > 0 ? Math.min(n, 1000) : 100));
+      }
       return json(res, 404, { error: '不存在' });
     } catch (e) {
       this.opt.log(`请求出错 ${route}：${(e as Error).message}`);
@@ -88,9 +111,48 @@ export class Web {
     res.writeHead(200, {
       'Content-Type': type,
       'Cache-Control': 'no-cache',
-      'Content-Security-Policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      // xterm.js 运行时插入 <style>，样式需允许 inline；脚本仍只允许同源
+      'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     });
     res.end(fs.readFileSync(path.join(this.opt.publicDir, file)));
+  }
+
+  /** /api/term?machine=…&session=…：须同源且已登录，否则不升级 */
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
+    let sameOrigin = false;
+    try {
+      sameOrigin = new URL(req.headers.origin ?? '').host === req.headers.host;
+    } catch {}
+    if (!sameOrigin) return reject(socket, 403, 'Forbidden');
+    if (!this.authed(req)) return reject(socket, 401, 'Unauthorized');
+    const url = new URL(req.url ?? '/', 'http://x');
+    const machine = url.searchParams.get('machine') ?? '';
+    const session = Number(url.searchParams.get('session') ?? '');
+    if (!machine || !Number.isInteger(session) || session < 0) return reject(socket, 400, 'Bad Request');
+    this.wss.handleUpgrade(req, socket, head, (ws) => this.onTerm(ws, machine, session, req.socket.remoteAddress ?? ''));
+  }
+
+  private onTerm(ws: WebSocket, machine: string, session: number, ip: string) {
+    this.terms.set(ws, true);
+    ws.on('pong', () => this.terms.set(ws, true));
+    ws.on('error', () => {});
+    const h = this.agents.join(machine, session, {
+      ip,
+      send: (m) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m)),
+      end: () => ws.close(1000),
+    });
+    ws.on('message', (data, isBinary) => {
+      let msg: any;
+      try {
+        msg = isBinary ? undefined : JSON.parse(data.toString());
+      } catch {}
+      if (msg?.type === 'input' && typeof msg.data === 'string') h?.input(msg.data);
+      else if (msg?.type === 'resize' && size(msg.cols) && size(msg.rows)) h?.resize(msg.cols, msg.rows);
+    });
+    ws.on('close', () => {
+      this.terms.delete(ws);
+      h?.leave();
+    });
   }
 
   private authed(req: IncomingMessage) {
@@ -164,8 +226,12 @@ export class Web {
     clearTimeout(this.pushTimer);
     for (const res of this.clients) res.end();
     this.clients.clear();
+    for (const ws of this.terms.keys()) ws.terminate();
+    this.wss.close();
   }
 }
+
+const size = (v: unknown) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000;
 
 function sha256(s: string) {
   return createHash('sha256').update(s, 'utf8').digest();

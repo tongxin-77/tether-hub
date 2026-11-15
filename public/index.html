@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tether Hub</title>
+<link rel="stylesheet" href="/xterm/xterm.css">
 <link rel="stylesheet" href="/style.css">
+<script src="/xterm/xterm.js" defer></script>
+<script src="/xterm/addon-fit.js" defer></script>
 <script src="/app.js" defer></script>
 </head>
 <body>
@@ -26,6 +29,24 @@
     <button id="logout" class="ghost">退出登录</button>
   </header>
   <main id="machines" class="machines"></main>
+  <section class="audit-wrap">
+    <div class="audit-head">
+      <h2>接管审计</h2>
+      <button id="audit-refresh" class="ghost">刷新</button>
+    </div>
+    <div class="card audit"><table><tbody id="audit"></tbody></table></div>
+  </section>
+</section>
+
+<section id="term" class="term-overlay" hidden>
+  <div class="card term-card">
+    <header class="term-head">
+      <span id="term-title" class="term-title"></span>
+      <span id="term-status" class="term-status"></span>
+      <button id="term-close" class="ghost">关闭</button>
+    </header>
+    <div id="term-box" class="term-box"></div>
+  </div>
 </section>
 </body>
 </html>

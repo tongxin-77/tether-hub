@@ -34,7 +34,7 @@ test('hello → welcome，机器上线并持久化', async () => {
   await c.opened;
   c.hello('m-welcome');
   const w = await c.next('welcome');
-  assert.deepEqual(w, { type: 'welcome', proto: 1, hubVersion: '0.1.0' });
+  assert.deepEqual(w, { type: 'welcome', proto: 2, hubVersion: '0.1.0' });
   const m = ctx.hub.agents.machines.get('m-welcome')!;
   assert.equal(m.online, true);
   assert.equal(m.tokenName, 'pc1');
@@ -47,13 +47,13 @@ test('hello → welcome，机器上线并持久化', async () => {
 test('proto 不兼容 → proto_unsupported，关闭码 4002', async () => {
   const c = new Client(ctx.wsUrl, ctx.token);
   await c.opened;
-  c.hello('m-proto', { proto: 2 });
+  c.hello('m-proto', { proto: 1 });
   assert.equal((await c.next('error')).code, 'proto_unsupported');
   assert.equal((await c.closed).code, 4002);
 });
 
 test('首条消息不是合法 hello → bad_hello，关闭码 4003', async () => {
-  for (const first of [{ type: 'sessions', sessions: [] }, 'not json', { type: 'hello', proto: 1 }, { type: 'hello', machineId: 'x', machineName: 'x', version: 'x' }]) {
+  for (const first of [{ type: 'sessions', sessions: [] }, 'not json', { type: 'hello', proto: 2 }, { type: 'hello', machineId: 'x', machineName: 'x', version: 'x' }]) {
     const c = new Client(ctx.wsUrl, ctx.token);
     await c.opened;
     c.send(first);
@@ -63,14 +63,14 @@ test('首条消息不是合法 hello → bad_hello，关闭码 4003', async () =
 });
 
 test('hello 字段超长 → bad_hello，边界长度可通过', async () => {
-  const hello = (machineId: string, machineName: string, version: string, proto: unknown = 1) =>
+  const hello = (machineId: string, machineName: string, version: string, proto: unknown = 2) =>
     ({ type: 'hello', proto, machineId, machineName, version });
   for (const bad of [
     hello('', 'n', 'v'),
     hello('a'.repeat(65), 'n', 'v'),
     hello('m-long', 'n'.repeat(257), 'v'),
     hello('m-long', 'n', 'v'.repeat(257)),
-    hello('m-long', 'n', 'v', '1'),
+    hello('m-long', 'n', 'v', '2'),
   ]) {
     const c = new Client(ctx.wsUrl, ctx.token);
     await c.opened;
@@ -116,7 +116,7 @@ test('probe 连接：回 welcome，但常驻连接不收到 replaced、Web 状�
   const probe = new Client(ctx.wsUrl, ctx.token);
   await probe.opened;
   probe.hello('m-probe', { machineName: 'PROBE-NAME', version: '9.9.9', probe: true });
-  assert.deepEqual(await probe.next('welcome'), { type: 'welcome', proto: 1, hubVersion: '0.1.0' });
+  assert.deepEqual(await probe.next('welcome'), { type: 'welcome', proto: 2, hubVersion: '0.1.0' });
   probe.send({ type: 'sessions', sessions: [] });
   await new Promise((r) => setTimeout(r, 150));
   probe.ws.close();

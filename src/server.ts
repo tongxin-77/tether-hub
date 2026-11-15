@@ -1,4 +1,4 @@
-// 组装 hub：HTTP(S) 服务器 + /agent WebSocket + Web 界面，并监听 hub.json 变化以响应 token 吊销。
+// 组装 hub：HTTP(S) 服务器 + /agent WebSocket + Web 界面（含 /api/term），并监听 hub.json 变化以响应 token 吊销。
 
 import fs from 'node:fs';
 import http from 'node:http';
@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Agents } from './agents.js';
+import { appendAudit } from './audit.js';
 import { dataFile, readData, updateData, type TokenRec } from './store.js';
 import { Web } from './web.js';
 
@@ -56,12 +57,19 @@ export async function startHub(opt: HubOptions): Promise<Hub> {
       pingIntervalMs: opt.pingIntervalMs ?? 25_000,
       tokens: () => tokens,
       persist,
+      audit: (rec) => {
+        try {
+          appendAudit(dir, rec);
+        } catch (e) {
+          log(`写入审计日志失败：${(e as Error).message}`);
+        }
+      },
       log,
     },
     initial.machines,
   );
   const web = new Web(
-    { adminPassword: opt.adminPassword, secure: !!opt.tls, publicDir: path.join(root, 'public'), hubVersion: HUB_VERSION, log },
+    { adminPassword: opt.adminPassword, secure: !!opt.tls, publicDir: path.join(root, 'public'), dataDir: dir, hubVersion: HUB_VERSION, log },
     agents,
   );
 
@@ -79,7 +87,10 @@ export async function startHub(opt: HubOptions): Promise<Hub> {
 
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => void web.handle(req, res);
   const server = opt.tls ? https.createServer({ cert: opt.tls.cert, key: opt.tls.key }, handler) : http.createServer(handler);
-  server.on('upgrade', (req, socket, head) => agents.handleUpgrade(req, socket, head));
+  server.on('upgrade', (req, socket, head) => {
+    if (new URL(req.url ?? '/', 'http://x').pathname === '/api/term') web.handleUpgrade(req, socket, head);
+    else agents.handleUpgrade(req, socket, head);
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
