@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Tether Hub 原型 03</title>
+<style>
+/* ---------- 主题令牌：主色 + 中性灰 + 一种警示色 ---------- */
+:root {
+  color-scheme: light;
+  --bg: #f5f6f8; --surface: #fff; --surface-2: #f6f7f9; --hover: #eff1f4; --input: #f1f2f5;
+  --text-1: #1d2129; --text-2: #4e5969; --text-3: #8a919f; --text-4: #c4c9d2;
+  --line: rgba(15, 23, 42, .07); --ring: rgba(15, 23, 42, .04);
+  --primary: #165dff; --primary-hover: #3c78ff; --primary-soft: rgba(22, 93, 255, .08); --primary-text: #165dff;
+  --warn: #ff7d00; --warn-soft: rgba(255, 125, 0, .09); --warn-text: #c95f00;
+  --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 4px 16px rgba(15, 23, 42, .04);
+  --shadow-lg: 0 12px 40px rgba(15, 23, 42, .12);
+  --mask: rgba(15, 23, 42, .32);
+  --r-card: 14px; --r-ctl: 8px; --r-inner: 10px;
+  --header-h: 60px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "SF Mono", Menlo, "Courier New", monospace;
+  --vvh: 100dvh; --vvtop: 0px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1013; --surface: #17181c; --surface-2: #1d1f24; --hover: #23252b; --input: #202227;
+    --text-1: #e7e9ec; --text-2: #aeb3bc; --text-3: #7c828d; --text-4: #4b505a;
+    --line: rgba(255, 255, 255, .07); --ring: rgba(255, 255, 255, .06);
+    --primary: #3c7eff; --primary-hover: #5b92ff; --primary-soft: rgba(60, 126, 255, .15); --primary-text: #7aa7ff;
+    --warn: #ff8f1f; --warn-soft: rgba(255, 143, 31, .13); --warn-text: #ffad5c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-lg: 0 12px 40px rgba(0, 0, 0, .5); --mask: rgba(0, 0, 0, .55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1013; --surface: #17181c; --surface-2: #1d1f24; --hover: #23252b; --input: #202227;
+  --text-1: #e7e9ec; --text-2: #aeb3bc; --text-3: #7c828d; --text-4: #4b505a;
+  --line: rgba(255, 255, 255, .07); --ring: rgba(255, 255, 255, .06);
+  --primary: #3c7eff; --primary-hover: #5b92ff; --primary-soft: rgba(60, 126, 255, .15); --primary-text: #7aa7ff;
+  --warn: #ff8f1f; --warn-soft: rgba(255, 143, 31, .13); --warn-text: #ffad5c;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-lg: 0 12px 40px rgba(0, 0, 0, .5); --mask: rgba(0, 0, 0, .55);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font: 14px/1.6 var(--font); color: var(--text-1); background: var(--bg); -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; }
+button { font: inherit; cursor: pointer; }
+input, select { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+a { color: var(--primary-text); text-decoration: none; }
+code { font-family: var(--mono); font-size: 12px; }
+
+/* ---------- 控件 ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: var(--r-ctl); border: 0; background: var(--hover); color: var(--text-1); white-space: nowrap; transition: background .15s, color .15s; }
+.btn:hover { background: var(--input); color: var(--primary-text); }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); color: #fff; }
+.btn-ghost { background: transparent; color: var(--text-2); }
+.btn-ghost:hover { background: var(--hover); color: var(--text-1); }
+.btn-sm { height: 28px; padding: 0 12px; font-size: 13px; }
+.btn:disabled, .btn:disabled:hover { background: var(--hover); color: var(--text-4); cursor: not-allowed; }
+.btn-icon { width: 32px; padding: 0; }
+
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; background: var(--hover); color: var(--text-2); flex: none; }
+.tag-primary { background: var(--primary-soft); color: var(--primary-text); }
+.tag-warn { background: var(--warn-soft); color: var(--warn-text); }
+.tag-warn-solid { background: var(--warn); color: #fff; font-weight: 500; }
+.tag-muted { background: transparent; color: var(--text-3); padding: 0; }
+
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--text-4); flex: none; }
+.dot-primary { background: var(--primary); }
+.dot-mid { background: var(--text-3); }
+
+.input { height: 34px; padding: 0 12px; border: 0; background: var(--input); border-radius: var(--r-ctl); outline: none; min-width: 0; transition: box-shadow .15s, background .15s; }
+.input:focus { background: var(--surface); box-shadow: 0 0 0 2px var(--primary); }
+.input::placeholder { color: var(--text-3); }
+
+.ico { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- 顶部导航 ---------- */
+.topnav { position: sticky; top: 0; z-index: 20; height: var(--header-h); background: var(--surface); box-shadow: 0 1px 0 var(--line); }
+.topnav-inner { max-width: 1440px; height: 100%; margin: 0 auto; padding: 0 28px; display: flex; align-items: center; }
+.logo { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: var(--text-1); margin-right: 32px; flex: none; }
+.logo-mark { width: 26px; height: 26px; border-radius: 8px; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 14px; font-weight: 700; }
+.menu { display: flex; gap: 4px; }
+.menu a { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: var(--r-ctl); color: var(--text-2); }
+.menu a:hover { background: var(--hover); color: var(--text-1); }
+.menu a.active { background: var(--primary-soft); color: var(--primary-text); font-weight: 500; }
+.badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--warn); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 600; }
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.sse { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 999px; background: var(--surface-2); font-size: 12px; color: var(--text-2); border: 0; }
+.sse .dot { width: 7px; height: 7px; }
+.sse.ok .dot { background: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.sse.retry .dot { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.sse.off .dot { background: var(--text-3); }
+
+/* ---------- 页面 ---------- */
+.page { max-width: 1440px; margin: 0 auto; padding: 28px 28px 48px; }
+.attn { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; padding: 12px 18px; margin-bottom: 24px; border-radius: var(--r-card); background: var(--warn-soft); }
+.attn-title { color: var(--warn-text); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.attn-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.attn-item { display: inline-flex; align-items: center; gap: 10px; height: 34px; padding: 0 6px 0 14px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow); }
+.attn-item .muted { color: var(--text-3); font-size: 12px; }
+.attn-item .btn { height: 26px; padding: 0 12px; border-radius: 999px; font-size: 12px; background: var(--warn); color: #fff; }
+.page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.page-title { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+.stats { color: var(--text-3); font-size: 13px; }
+.stats b { color: var(--text-1); font-weight: 600; }
+.page-tools { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--input); border-radius: 10px; }
+.seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font-size: 13px; }
+.seg button.on { background: var(--surface); color: var(--text-1); font-weight: 500; box-shadow: var(--shadow); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
+.card { background: var(--surface); border-radius: var(--r-card); box-shadow: var(--shadow), inset 0 0 0 1px var(--ring); display: flex; flex-direction: column; padding: 18px 18px 12px; cursor: pointer; transition: box-shadow .15s; min-width: 0; }
+.card:hover { box-shadow: 0 6px 24px rgba(15, 23, 42, .08), inset 0 0 0 1px var(--ring); }
+.card.selected { box-shadow: var(--shadow), inset 0 0 0 1.5px var(--primary); }
+.card.offline .card-name { color: var(--text-2); }
+.card-name { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.card-name .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-meta { color: var(--text-3); font-size: 12px; margin-top: 4px; }
+.card-meta .mono { font-family: var(--mono); }
+.kpis { display: flex; gap: 28px; margin: 16px 0 10px; padding: 12px 14px; background: var(--surface-2); border-radius: var(--r-inner); }
+.kpi-v { font-size: 20px; font-weight: 600; line-height: 26px; }
+.kpi-l { font-size: 12px; color: var(--text-3); }
+.kpi.warn .kpi-v { color: var(--warn); }
+.sess-list { list-style: none; margin: 0 -8px; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.sess-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r-inner); min-height: 48px; }
+.sess-row:hover { background: var(--surface-2); }
+.sess-row.attn-row { background: var(--warn-soft); }
+.sess-main { flex: 1; min-width: 0; }
+.sess-name { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.sess-name .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-sub { color: var(--text-3); font-size: 12px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-right { display: flex; align-items: center; gap: 10px; flex: none; }
+.sess-time { color: var(--text-3); font-size: 12px; }
+.card-foot { display: flex; align-items: center; justify-content: space-between; padding-top: 8px; color: var(--text-3); font-size: 12px; min-height: 32px; }
+.card-foot .more { color: var(--primary-text); font-size: 13px; }
+.empty { padding: 28px 16px; text-align: center; color: var(--text-3); font-size: 13px; flex: 1; }
+
+/* ---------- 抽屉 ---------- */
+.mask { position: fixed; inset: 0; background: var(--mask); z-index: 105; }
+.drawer { position: fixed; top: 10px; right: 10px; bottom: 10px; width: min(680px, calc(100% - 20px)); background: var(--surface); z-index: 106; display: flex; flex-direction: column; border-radius: 16px; box-shadow: var(--shadow-lg); overflow: hidden; }
+.drawer-head { display: flex; align-items: center; gap: 12px; padding: 18px 16px 6px 24px; flex: none; }
+.drawer-head h3 { margin: 0; font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.drawer-body { flex: 1; overflow: auto; padding: 12px 24px 24px; }
+.desc { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 24px; padding: 16px 18px; background: var(--surface-2); border-radius: 12px; margin: 0 0 16px; }
+.desc dt { color: var(--text-3); font-size: 12px; }
+.desc dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.note { padding: 10px 14px; border-radius: var(--r-inner); background: var(--surface-2); color: var(--text-2); font-size: 13px; margin-bottom: 16px; }
+.section-title { font-size: 14px; font-weight: 600; margin: 8px 0 10px; display: flex; align-items: center; gap: 8px; }
+.sess-card { padding: 14px 16px; margin-bottom: 8px; border-radius: 12px; background: var(--surface-2); }
+.sess-card.attn-row { background: var(--warn-soft); }
+.sess-card.exited { opacity: .72; }
+.sess-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sess-card-head .n { font-weight: 600; }
+.sess-card-head .act { margin-left: auto; }
+.kv { display: grid; grid-template-columns: 64px 1fr 64px 1fr; gap: 4px 12px; margin-top: 8px; font-size: 12px; }
+.kv dt { color: var(--text-3); }
+.kv dd { margin: 0; color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
+.kv dd.mono { font-family: var(--mono); }
+
+/* ---------- 终端 ---------- */
+.term-page { max-width: 1440px; margin: 0 auto; padding: 20px 28px; height: calc(100dvh - var(--header-h)); display: flex; flex-direction: column; gap: 14px; }
+.term-bar { display: flex; align-items: center; gap: 12px; background: var(--surface); border-radius: var(--r-card); box-shadow: var(--shadow), inset 0 0 0 1px var(--ring); padding: 10px 12px 10px 10px; flex: none; }
+.btn-back { gap: 4px; padding: 0 12px 0 8px; }
+.term-title { min-width: 0; flex: 1; }
+.term-title h2 { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.term-title h2 .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-title .sub { color: var(--text-3); font-size: 12px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-tools { display: flex; align-items: center; gap: 8px; flex: none; }
+.term-tools label { font-size: 12px; color: var(--text-3); }
+.term-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; border-radius: var(--r-card); overflow: hidden; background: #15161a; position: relative; box-shadow: var(--shadow); }
+.term { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px; font: 13px/1.5 var(--mono); color: #d4d7dd; white-space: pre; }
+.term-foot { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 30px; padding: 0 16px; color: #6f7581; font-size: 12px; background: #1a1b20; }
+.term-wrap.inactive .term { opacity: .4; }
+.term-overlay { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); background: var(--surface); color: var(--text-1); border-radius: var(--r-card); padding: 22px 24px; width: min(360px, calc(100% - 32px)); text-align: center; box-shadow: var(--shadow-lg); }
+.term-overlay h4 { margin: 0 0 6px; font-size: 15px; }
+.term-overlay p { margin: 0 0 16px; color: var(--text-2); font-size: 13px; }
+.term-overlay .tag { margin-bottom: 10px; }
+.c-g { color: #7ec27a; } .c-r { color: #ec7b74; } .c-y { color: #e5c07b; } .c-b { color: #7aa7ff; } .c-w { color: #fff; }
+.c-dim { color: #747a86; } .c-b1 { font-weight: 700; } .c-o { color: #d97757; }
+.bg-add { background: rgba(126, 194, 122, .14); display: inline-block; min-width: 100%; } .bg-del { background: rgba(236, 123, 116, .14); display: inline-block; min-width: 100%; }
+.tbox { display: inline-block; min-width: 52ch; padding: 2px 1ch; border: 1px solid; border-radius: 8px; } .c-o-bd { border-color: #d97757; } .c-b-bd { border-color: #7aa7ff; }
+.cursor { display: inline-block; width: .6em; background: #d4d7dd; }
+.keybar { display: none; }
+
+/* ---------- 审计 ---------- */
+.panel { background: var(--surface); border-radius: var(--r-card); box-shadow: var(--shadow), inset 0 0 0 1px var(--ring); overflow: hidden; }
+.filters { display: flex; flex-wrap: wrap; gap: 12px 16px; padding: 18px 20px 10px; align-items: center; }
+.field { display: flex; align-items: center; gap: 8px; }
+.field > span { color: var(--text-3); font-size: 13px; white-space: nowrap; }
+.field .input { width: 160px; }
+.field .input.kw { width: 200px; }
+.filters .grow { margin-left: auto; display: flex; gap: 8px; }
+.tbl-wrap { padding: 0 8px; }
+table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; }
+.tbl th { text-align: left; font-weight: 500; color: var(--text-3); padding: 10px 12px; font-size: 12px; white-space: nowrap; }
+.tbl td { padding: 11px 12px; font-size: 13px; vertical-align: middle; border-top: 1px solid var(--line); }
+.tbl tbody tr:hover td { background: var(--surface-2); }
+.tbl .mono { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.code { font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-left: 8px; }
+.pager { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 12px 20px 16px; color: var(--text-3); font-size: 13px; }
+.pager span { margin-right: 8px; }
+.pager .pg { min-width: 32px; height: 32px; border-radius: var(--r-ctl); border: 0; background: transparent; color: var(--text-2); }
+.pager .pg:hover { background: var(--hover); }
+.pager .pg.on { background: var(--primary-soft); color: var(--primary-text); font-weight: 600; }
+.audit-cards { display: none; }
+
+/* ---------- 登录 ---------- */
+.login-page { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.login-card { width: 400px; max-width: 100%; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow), inset 0 0 0 1px var(--ring); padding: 40px 36px 32px; }
+.login-card .logo { margin: 0 0 6px; font-size: 19px; }
+.login-card .logo-mark { width: 34px; height: 34px; font-size: 17px; border-radius: 10px; }
+.login-card .desc-t { color: var(--text-3); font-size: 13px; margin: 0 0 28px; }
+.form-item { margin-bottom: 20px; }
+.form-item label { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 8px; }
+.form-item .input { width: 100%; height: 42px; }
+.form-err { color: var(--warn-text); font-size: 12px; margin-top: 6px; }
+.login-card .btn-primary { width: 100%; height: 42px; font-size: 15px; }
+.login-foot { margin-top: 18px; font-size: 12px; color: var(--text-3); }
+
+/* ---------- 原型切换器 ---------- */
+.proto { position: fixed; right: 16px; bottom: 16px; z-index: 100; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--ring); font-size: 12px; }
+.proto span { color: var(--text-3); margin: 0 6px 0 8px; }
+.proto a, .proto button { height: 28px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 8px; color: var(--text-2); border: 0; background: transparent; font-size: 12px; }
+.proto a:hover, .proto button:hover { background: var(--hover); }
+.proto a.on { background: var(--primary-soft); color: var(--primary-text); font-weight: 500; }
+.proto .sep { width: 1px; height: 14px; background: var(--line); margin: 0 4px; }
+.tabbar { display: none; }
+.m-only { display: none !important; }
+@media (min-width: 769px) {
+  body { padding-bottom: 56px; }
+  body.r-login, body.r-term { padding-bottom: 0; }
+  body.r-term .term-page { height: calc(100dvh - var(--header-h) - 56px); padding-bottom: 0; }
+}
+
+/* ================= 手机端 ================= */
+@media (max-width: 768px) {
+  :root { --header-h: 56px; }
+  .d-only { display: none !important; }
+  .m-only { display: revert !important; }
+  .btn.m-only { display: inline-flex !important; }
+  body { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+  body.r-login, body.r-term { padding-bottom: 0; }
+
+  .proto { position: static; box-shadow: none; border-radius: 0; padding: 6px 12px; background: var(--surface-2); overflow-x: auto; }
+  .proto a, .proto button { height: 32px; }
+
+  .topnav-inner { padding: 0 6px 0 16px; }
+  .logo { margin-right: 0; }
+  .menu { display: none; }
+  .nav-right { gap: 0; }
+  .nav-right .btn-icon { width: 44px; height: 44px; }
+
+  .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; height: calc(60px + env(safe-area-inset-bottom)); padding: 0 24px env(safe-area-inset-bottom); background: var(--surface); box-shadow: 0 -1px 0 var(--line); }
+  .tabbar a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--text-3); font-size: 11px; position: relative; }
+  .tabbar a .ico { width: 22px; height: 22px; }
+  .tabbar a.active { color: var(--primary-text); }
+  .tabbar .badge { position: absolute; top: 6px; left: calc(50% + 6px); }
+
+  .page { padding: 16px 16px 24px; }
+  .attn { position: sticky; top: calc(var(--header-h) + 8px); z-index: 10; flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; margin-bottom: 18px; box-shadow: 0 4px 16px rgba(15, 23, 42, .06); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
+  .attn-list { flex-direction: column; gap: 6px; }
+  .attn-item { height: auto; min-height: 52px; padding: 4px 4px 4px 14px; border-radius: 12px; box-shadow: none; }
+  .attn-item .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attn-item .btn { height: 44px; padding: 0 16px; border-radius: 10px; font-size: 14px; }
+  .page-head { gap: 10px 12px; margin-bottom: 14px; }
+  .page-tools { margin-left: 0; width: 100%; }
+  .page-tools .input { flex: 1; height: 44px; }
+  .seg { padding: 2px; }
+  .seg button { height: 40px; padding: 0 12px; }
+  .grid { grid-template-columns: 1fr; gap: 14px; }
+  .card { padding: 16px 16px 8px; }
+  .kpis { gap: 0; justify-content: space-between; }
+  .sess-row { min-height: 60px; }
+  .sess-row .btn-sm { height: 44px; padding: 0 16px; font-size: 14px; border-radius: 10px; }
+  .sess-time { display: none; }
+  .card-foot { min-height: 44px; padding-top: 4px; }
+
+  .drawer { top: auto; right: 0; bottom: 0; left: 0; width: 100%; height: calc(100dvh - 48px); border-radius: 18px 18px 0 0; }
+  .drawer-head { padding: 12px 6px 4px 18px; }
+  .drawer-head .btn-icon { width: 44px; height: 44px; }
+  .drawer-body { padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .desc { grid-template-columns: 1fr 1fr; padding: 14px; gap: 10px 16px; }
+  .kv { grid-template-columns: 64px 1fr; }
+  .sess-card .act .btn { height: 44px; padding: 0 18px; border-radius: 10px; }
+
+  /* 终端全屏：顶栏左侧提供「返回」 */
+  .term-page { position: fixed; left: 0; right: 0; top: var(--vvtop); height: var(--vvh); z-index: 60; padding: 0; gap: 0; background: #15161a; }
+  .term-bar { border-radius: 0; box-shadow: none; padding: 6px 8px 6px 4px; gap: 4px; flex-wrap: wrap; }
+  .btn-back { height: 44px; order: -1; font-size: 15px; }
+  .term-title { padding-left: 4px; }
+  .term-tools { width: 100%; padding: 2px 0 2px 4px; }
+  .term-tools .input { flex: 1; height: 40px; }
+  .term-wrap { border-radius: 0; box-shadow: none; }
+  .term { font-size: 11.5px; padding: 10px; }
+  .term-foot { display: none; }
+  .keybar { display: flex; flex: none; gap: 6px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); background: #1a1b20; overflow-x: auto; scrollbar-width: none; }
+  .keybar button { flex: 1 0 auto; min-width: 44px; height: 44px; padding: 0 10px; border-radius: 10px; border: 0; background: #272930; color: #e3e5e8; font: 13px var(--mono); }
+  .keybar button:active { background: #33363e; }
+  .keybar button:disabled { color: #555a64; }
+
+  .filters { padding: 14px; gap: 10px; }
+  .field { width: calc(50% - 5px); flex-direction: column; align-items: stretch; gap: 4px; }
+  .field > span { font-size: 12px; }
+  .field .input, .field .input.kw { width: 100%; height: 44px; }
+  .field.wide { width: 100%; }
+  .filters .grow { margin-left: 0; width: 100%; }
+  .filters .grow .btn { flex: 1; height: 44px; }
+  .tbl-wrap { display: none; }
+  .audit-cards { display: block; padding: 0 8px; }
+  .a-card { padding: 12px 8px; border-top: 1px solid var(--line); }
+  .a-card-top { display: flex; align-items: center; gap: 8px; }
+  .a-card-top time { margin-left: auto; color: var(--text-3); font-size: 12px; }
+  .a-card-m { margin-top: 6px; font-size: 13px; }
+  .a-card-s { margin-top: 2px; color: var(--text-3); font-size: 12px; font-family: var(--mono); }
+  .pager { justify-content: center; }
+  .pager .pg { min-width: 44px; height: 44px; }
+
+  .login-page { align-items: flex-start; padding-top: 10vh; }
+  .login-card { padding: 32px 22px 26px; }
+  .login-card .btn-primary, .form-item .input { height: 46px; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+  <symbol id="i-pc" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+</svg>
+
+<nav class="proto" id="proto">
+  <span>原型视图</span>
+  <a href="#login">登录</a><a href="#main">主界面</a><a href="#term">接管终端</a><a href="#audit">审计</a>
+  <i class="sep"></i><button type="button" data-theme-toggle>切换主题</button>
+</nav>
+
+<!-- 登录 -->
+<section id="v-login" class="login-page" hidden>
+  <form class="login-card" onsubmit="event.preventDefault(); location.hash='#main'">
+    <div class="logo"><span class="logo-mark">T</span>Tether Hub</div>
+    <p class="desc-t">自托管会话管理服务器</p>
+    <div class="form-item">
+      <label for="pwd">管理员密码</label>
+      <input id="pwd" class="input" type="password" placeholder="请输入密码" autocomplete="current-password">
+      <div class="form-err" id="login-err" hidden>密码错误</div>
+    </div>
+    <button class="btn btn-primary" type="submit">登录</button>
+    <div class="login-foot">密码即服务器启动时配置的 <code>HUB_ADMIN_PASSWORD</code>。</div>
+  </form>
+</section>
+
+<!-- 应用壳 -->
+<div id="app" hidden>
+  <header class="topnav">
+    <div class="topnav-inner">
+      <a class="logo" href="#main"><span class="logo-mark">T</span>Tether Hub</a>
+      <nav class="menu">
+        <a href="#main" data-nav="main">机器<span class="badge" id="nav-badge">3</span></a>
+        <a href="#audit" data-nav="audit">审计</a>
+      </nav>
+      <div class="nav-right">
+        <button class="sse ok" id="sse" title="点击切换演示状态"><span class="dot"></span><span id="sse-t">实时连接</span></button>
+        <button class="btn btn-ghost btn-icon" data-theme-toggle aria-label="切换浅色/深色" title="切换浅色/深色"><svg class="ico"><use href="#i-moon"/></svg></button>
+        <a class="btn btn-ghost d-only" href="#login">退出</a>
+        <a class="btn btn-ghost btn-icon m-only" href="#login" aria-label="退出" title="退出"><svg class="ico"><use href="#i-out"/></svg></a>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主界面：机器卡片 -->
+  <main id="v-main" class="page" hidden>
+    <div class="attn" id="attn"></div>
+    <div class="page-head">
+      <h1 class="page-title">机器</h1>
+      <div class="stats" id="stats"></div>
+      <div class="page-tools">
+        <div class="seg" id="seg-filter">
+          <button class="on" data-f="all">全部</button><button data-f="online">在线</button><button data-f="attn">需关注</button>
+        </div>
+        <input class="input" id="q" placeholder="搜索机器或会话" style="width:220px">
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <!-- 接管终端 -->
+  <main id="v-term" class="term-page" hidden>
+    <div class="term-bar">
+      <button class="btn btn-ghost btn-back" id="t-back"><svg class="ico"><use href="#i-back"/></svg>返回</button>
+      <div class="term-title">
+        <h2><span class="n" id="t-name"></span><span id="t-tag"></span></h2>
+        <div class="sub" id="t-sub"></div>
+      </div>
+      <div class="term-tools">
+        <label for="t-demo">演示状态</label>
+        <select class="input" id="t-demo">
+          <option value="active">接管中</option>
+          <option value="reclaimed">已被本地收回</option>
+          <option value="disabled">本机未允许接管</option>
+          <option value="exited">会话已退出</option>
+          <option value="offline">机器离线</option>
+        </select>
+        <button class="btn d-only" id="t-end">结束接管</button>
+        <button class="btn btn-ghost btn-icon d-only" id="t-close" aria-label="关闭" title="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+    <div class="term-wrap" id="t-wrap">
+      <div class="term" id="term" tabindex="0"></div>
+      <div class="term-overlay" id="t-ov" hidden></div>
+      <div class="term-foot"><span id="t-foot-l"></span><span>Ctrl+Shift+V 粘贴 · 选中即复制</span></div>
+    </div>
+    <div class="keybar" id="keybar">
+      <button>Esc</button><button>Tab</button><button>Ctrl+C</button><button>↑</button><button>↓</button><button>←</button><button>→</button>
+    </div>
+  </main>
+
+  <!-- 审计 -->
+  <main id="v-audit" class="page" hidden>
+    <div class="page-head">
+      <h1 class="page-title">审计</h1>
+      <div class="stats">共 <b>128</b> 条 · 保留最近 90 天</div>
+    </div>
+    <div class="panel">
+      <div class="filters">
+        <label class="field"><span>事件</span><select class="input" id="f-ev"><option value="">全部事件</option></select></label>
+        <label class="field"><span>机器</span><select class="input" id="f-m"><option value="">全部机器</option></select></label>
+        <label class="field"><span>时间</span><select class="input"><option>最近 7 天</option><option>今天</option><option>最近 30 天</option></select></label>
+        <label class="field wide"><span>关键词</span><input class="input kw" id="f-q" placeholder="会话名 / 来源 IP"></label>
+        <div class="grow"><button class="btn" id="f-reset">重置</button><button class="btn btn-primary" id="f-go">查询</button></div>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th style="width:180px">时间</th><th style="width:220px">事件</th><th>机器</th><th>会话</th><th>来源 IP</th><th>说明</th></tr></thead>
+          <tbody id="a-tbody"></tbody>
+        </table>
+      </div>
+      <div class="audit-cards" id="a-cards"></div>
+      <div class="pager"><span class="d-only">共 128 条</span><button class="pg on">1</button><button class="pg">2</button><button class="pg">3</button><button class="pg">…</button><button class="pg">13</button></div>
+    </div>
+  </main>
+
+  <nav class="tabbar">
+    <a href="#main" data-nav="main"><svg class="ico"><use href="#i-pc"/></svg>机器<span class="badge" id="tab-badge">3</span></a>
+    <a href="#audit" data-nav="audit"><svg class="ico"><use href="#i-list"/></svg>审计</a>
+  </nav>
+</div>
+
+<!-- 抽屉 -->
+<div class="mask" id="mask" hidden></div>
+<aside class="drawer" id="drawer" hidden>
+  <div class="drawer-head"><h3 id="d-title"></h3><button class="btn btn-ghost btn-icon" id="d-close" style="margin-left:auto" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button></div>
+  <div class="drawer-body" id="d-body"></div>
+</aside>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* 颜色只用三类：主色（进行中 / 在线）、中性灰、警示色（需要人处理） */
+const STATUS = { running: ['运行中', 'dot-primary'], waiting: ['等待中', 'dot-mid'], exited: ['已退出', ''] };
+const CLAUDE = {
+  thinking: ['思考中', 'tag-primary'], waiting: ['等待确认', 'tag-warn-solid'],
+  background: ['子代理运行中', 'tag-primary'], done: ['已完成', ''],
+};
+const AUDIT = {
+  start: ['开始接管', 'tag-primary'], end: ['结束接管', ''], denied: ['接管被拒绝', 'tag-warn'],
+  reclaimed: ['被本地收回', 'tag-warn'], disabled: ['本机关闭接管', 'tag-warn'],
+  exited: ['会话退出', ''], disconnected: ['机器断线', 'tag-warn'],
+};
+
+const MACHINES = [
+  { id: 'm1', name: 'DEV-WS01', online: true, version: '0.9.3', token: 'office-ws', lastSeen: '在线', ip: '10.0.1.24', takeover: true,
+    sessions: [
+      { id: 's1', name: 'api-refactor', cwd: 'C:\\work\\api-server', cmd: 'claude', status: 'running', claude: 'waiting', start: '09:12', last: '1 分钟前', host: '' },
+      { id: 's2', name: 'web-frontend', cwd: 'C:\\work\\web', cmd: 'claude', status: 'running', claude: 'thinking', start: '10:03', last: '刚刚', host: '' },
+      { id: 's3', name: 'prod-db', cwd: '/home/deploy', cmd: 'ssh', status: 'waiting', claude: '', start: '08:40', last: '26 分钟前', host: 'deploy@10.0.3.21' },
+      { id: 's4', name: 'build-watch', cwd: 'C:\\work\\api-server', cmd: 'pwsh', status: 'running', claude: '', start: '08:31', last: '3 分钟前', host: '' },
+      { id: 's5', name: 'hotfix-1123', cwd: 'C:\\work\\api-server', cmd: 'claude', status: 'exited', claude: 'done', start: '昨天 17:20', last: '昨天 18:02', host: '' },
+    ] },
+  { id: 'm2', name: 'LAPTOP-T14', online: true, version: '0.9.2', token: 'laptop', lastSeen: '在线', ip: '192.168.1.37', takeover: true,
+    sessions: [
+      { id: 's6', name: 'tether', cwd: 'C:\\workspace\\tether', cmd: 'claude', status: 'running', claude: 'waiting', start: '11:20', last: '4 分钟前', host: '' },
+      { id: 's7', name: 'gpu-box', cwd: '~/train', cmd: 'claude', status: 'running', claude: 'waiting', start: '10:48', last: '7 分钟前', host: 'tx@gpu-01.lan' },
+      { id: 's8', name: 'scratch', cwd: 'C:\\Users\\tx', cmd: 'pwsh', status: 'waiting', claude: '', start: '10:02', last: '1 小时前', host: '' },
+    ] },
+  { id: 'm3', name: 'HOME-PC', online: true, version: '0.9.3', token: 'home-pc', lastSeen: '在线', ip: '113.88.12.6', takeover: false,
+    sessions: [
+      { id: 's9', name: 'blog', cwd: 'D:\\code\\blog', cmd: 'claude', status: 'running', claude: 'background', start: '07:55', last: '刚刚', host: '' },
+      { id: 's10', name: 'dotfiles', cwd: 'D:\\code\\dotfiles', cmd: 'claude', status: 'running', claude: 'done', start: '07:30', last: '42 分钟前', host: '' },
+    ] },
+  { id: 'm4', name: 'BUILD-SRV02', online: false, version: '0.9.1', token: 'build-srv', lastSeen: '2 小时前', ip: '10.0.2.8', takeover: true,
+    sessions: [
+      { id: 's11', name: 'nightly', cwd: 'E:\\ci\\nightly', cmd: 'pwsh', status: 'running', claude: '', start: '02:00', last: '2 小时前', host: '' },
+      { id: 's12', name: 'release-notes', cwd: 'E:\\ci\\repo', cmd: 'claude', status: 'exited', claude: 'done', start: '昨天 22:10', last: '昨天 22:41', host: '' },
+    ] },
+  { id: 'm5', name: 'MEDIA-NUC', online: true, version: '0.9.3', token: 'nuc', lastSeen: '在线', ip: '192.168.1.50', takeover: true, sessions: [] },
+];
+
+const AUDITS = [
+  ['2026-11-15 11:42:08', 'start', 'DEV-WS01', 'api-refactor', '223.104.9.17', '网页端发起'],
+  ['2026-11-15 11:30:51', 'reclaimed', 'LAPTOP-T14', 'tether', '223.104.9.17', '本地 GUI 收回控制'],
+  ['2026-11-15 11:18:03', 'start', 'LAPTOP-T14', 'tether', '223.104.9.17', '网页端发起'],
+  ['2026-11-15 10:57:40', 'denied', 'HOME-PC', 'blog', '223.104.9.17', '本机未允许接管'],
+  ['2026-11-15 09:46:12', 'disconnected', 'BUILD-SRV02', 'nightly', '—', '接管中机器断线'],
+  ['2026-11-15 09:31:27', 'start', 'BUILD-SRV02', 'nightly', '10.0.8.3', '网页端发起'],
+  ['2026-11-15 09:05:59', 'end', 'DEV-WS01', 'prod-db', '10.0.8.3', '关闭网页视图'],
+  ['2026-11-15 08:52:14', 'start', 'DEV-WS01', 'prod-db', '10.0.8.3', '网页端发起'],
+  ['2026-11-14 22:41:30', 'exited', 'BUILD-SRV02', 'release-notes', '10.0.8.3', '接管中会话退出'],
+  ['2026-11-14 22:30:02', 'start', 'BUILD-SRV02', 'release-notes', '10.0.8.3', '网页端发起'],
+  ['2026-11-14 20:15:44', 'disabled', 'HOME-PC', 'dotfiles', '113.88.12.6', '接管中本机关闭了允许接管'],
+  ['2026-11-14 20:02:19', 'start', 'HOME-PC', 'dotfiles', '113.88.12.6', '网页端发起'],
+];
+
+let filter = 'all', query = '', termSess = 's1', termMachine = 'm1', openMachine = null;
+
+const isWaiting = (s) => s.claude === 'waiting' && s.status !== 'exited';
+const sortSess = (list) => [...list].sort((a, b) => isWaiting(b) - isWaiting(a) || (a.status === 'exited') - (b.status === 'exited'));
+function allWaiting() {
+  const out = [];
+  for (const m of MACHINES) for (const s of m.sessions) if (isWaiting(s)) out.push([m, s]);
+  return out;
+}
+const tag = (text, cls) => `<span class="tag ${cls || ''}">${text}</span>`;
+const onlineTag = (m) => m.online ? tag('<span class="dot dot-primary"></span>在线', 'tag-primary') : tag('<span class="dot"></span>离线');
+function claudeTag(s) { if (!s.claude) return ''; const [t, c] = CLAUDE[s.claude]; return tag(t, c); }
+function statusTag(s) { const [t, c] = STATUS[s.status]; return tag(`<span class="dot ${c}"></span>${t}`); }
+function takeBtn(m, s, cls) {
+  if (s.status === 'exited') return '';
+  const dis = !m.online ? ' disabled title="机器离线"' : !m.takeover ? ' disabled title="本机未允许接管"' : '';
+  return `<button class="btn btn-sm ${cls || ''}" data-take="${m.id}:${s.id}"${dis}>接管</button>`;
+}
+
+function renderMain() {
+  const w = allWaiting();
+  $('nav-badge').textContent = $('tab-badge').textContent = w.length;
+  $('nav-badge').hidden = $('tab-badge').hidden = !w.length;
+  const attn = $('attn');
+  attn.hidden = !w.length;
+  attn.innerHTML = `<div class="attn-title"><span class="dot" style="background:var(--warn);width:8px;height:8px"></span>${w.length} 个 Claude 会话等待确认</div>
+    <div class="attn-list">${w.map(([m, s]) => `<span class="attn-item"><span class="grow"><b style="font-weight:500">${esc(s.name)}</b> <span class="muted">${esc(m.name)} · ${esc(s.last)}</span></span>${m.takeover && m.online ? `<button class="btn" data-take="${m.id}:${s.id}">去处理</button>` : ''}</span>`).join('')}</div>`;
+
+  const on = MACHINES.filter((m) => m.online).length;
+  const sessN = MACHINES.reduce((a, m) => a + m.sessions.filter((s) => s.status !== 'exited').length, 0);
+  $('stats').innerHTML = `<b>${on}</b> / ${MACHINES.length} 台在线<span class="d-only"> · <b>${sessN}</b> 个活动会话</span>`;
+
+  const q = query.trim().toLowerCase();
+  const list = MACHINES.filter((m) => {
+    if (filter === 'online' && !m.online) return false;
+    if (filter === 'attn' && !m.sessions.some(isWaiting)) return false;
+    if (q && !m.name.toLowerCase().includes(q) && !m.sessions.some((s) => s.name.toLowerCase().includes(q))) return false;
+    return true;
+  });
+  $('grid').innerHTML = list.map(cardHtml).join('') || '<div class="panel empty" style="grid-column:1/-1">没有匹配的机器</div>';
+}
+
+function cardHtml(m) {
+  const live = m.sessions.filter((s) => s.status !== 'exited');
+  const waitN = live.filter(isWaiting).length;
+  const rows = sortSess(m.sessions).slice(0, 3).map((s) => `<li class="sess-row${isWaiting(s) ? ' attn-row' : ''}">
+      <span class="dot ${STATUS[s.status][1]}"></span>
+      <div class="sess-main"><div class="sess-name"><span class="n">${esc(s.name)}</span>${claudeTag(s)}</div>
+        <div class="sess-sub">${s.host ? 'SSH ' + esc(s.host) : esc(s.cwd)}</div></div>
+      <div class="sess-right"><span class="sess-time">${s.status === 'exited' ? '已退出' : esc(s.last)}</span>${takeBtn(m, s)}</div></li>`).join('');
+  const meta = [`v${m.version}`, `token <span class="mono">${esc(m.token)}</span>`];
+  if (!m.online) meta.push('最后在线 ' + m.lastSeen);
+  if (!m.takeover) meta.push('未允许接管');
+  return `<article class="card${m.online ? ' ' : ' offline'}${openMachine === m.id ? ' selected' : ''}" data-m="${m.id}">
+    <div class="card-name"><span class="n">${esc(m.name)}</span>${onlineTag(m)}</div>
+    <div class="card-meta">${meta.join(' · ')}</div>
+    <div class="kpis"><div class="kpi"><div class="kpi-v">${live.length}</div><div class="kpi-l">活动会话</div></div>
+      <div class="kpi${waitN ? ' warn' : ''}"><div class="kpi-v">${waitN}</div><div class="kpi-l">等待确认</div></div>
+      <div class="kpi"><div class="kpi-v">${m.sessions.length - live.length}</div><div class="kpi-l">已退出</div></div></div>
+    ${m.sessions.length ? `<ul class="sess-list">${rows}</ul>` : '<div class="empty">暂无会话</div>'}
+    <div class="card-foot"><span>${m.online ? '' : '离线前的最后状态'}</span><span class="more">${m.sessions.length > 3 ? `全部 ${m.sessions.length} 个会话` : '详情'}</span></div>
+  </article>`;
+}
+
+function openDrawer(mid) {
+  const m = MACHINES.find((x) => x.id === mid);
+  openMachine = mid;
+  $('d-title').innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.name)}</span>${onlineTag(m)}`;
+  $('d-body').innerHTML = `
+    <dl class="desc">
+      <div><dt>Tether 版本</dt><dd>v${m.version}</dd></div>
+      <div><dt>Token 名</dt><dd style="font-family:var(--mono)">${esc(m.token)}</dd></div>
+      <div><dt>最后在线</dt><dd>${m.online ? '当前在线' : m.lastSeen}</dd></div>
+      <div><dt>连接地址</dt><dd style="font-family:var(--mono)">${m.ip}</dd></div>
+      <div><dt>允许接管</dt><dd>${m.takeover ? '是' : '否（本机设置）'}</dd></div>
+      <div><dt>会话数</dt><dd>${m.sessions.length}</dd></div>
+    </dl>
+    ${!m.online ? '<div class="note">机器离线，以下为最后一次上报的会话状态，暂不可接管。</div>' : ''}
+    ${m.online && !m.takeover ? '<div class="note">该机器未允许远程接管，可在本地 Tether 设置 › 管理服务器 中开启。</div>' : ''}
+    <h4 class="section-title">会话 <span class="tag">${m.sessions.length}</span></h4>
+    ${sortSess(m.sessions).map((s) => `<div class="sess-card${isWaiting(s) ? ' attn-row' : ''}${s.status === 'exited' ? ' exited' : ''}">
+      <div class="sess-card-head"><span class="n">${esc(s.name)}</span>${statusTag(s)}${claudeTag(s)}<span class="act">${takeBtn(m, s, 'btn-primary')}</span></div>
+      <dl class="kv">
+        <dt>工作目录</dt><dd class="mono">${esc(s.cwd)}</dd><dt>命令</dt><dd class="mono">${esc(s.cmd)}</dd>
+        <dt>开始时间</dt><dd>${esc(s.start)}</dd><dt>最后活动</dt><dd>${esc(s.last)}</dd>
+        ${s.host ? `<dt>SSH 主机</dt><dd class="mono">${esc(s.host)}</dd>` : ''}
+      </dl></div>`).join('') || '<div class="empty">暂无会话</div>'}`;
+  $('mask').hidden = $('drawer').hidden = false;
+  document.querySelectorAll('.card').forEach((c) => c.classList.toggle('selected', c.dataset.m === mid));
+}
+function closeDrawer() {
+  openMachine = null;
+  $('mask').hidden = $('drawer').hidden = true;
+  document.querySelectorAll('.card.selected').forEach((c) => c.classList.remove('selected'));
+}
+
+/* ---------- 终端假内容 ---------- */
+const T = (cls, s) => `<span class="${cls}">${esc(s)}</span>`;
+// 边框用 CSS 画（字符框线在中文字体回退下难以对齐）
+const box = (c, rows) => `<span class="tbox ${c}-bd">${rows.join('\n')}</span>`;
+function claudeScreen() {
+  return [
+    box('c-o', [' ' + T('c-o c-b1', '✻') + ' Welcome to ' + T('c-b1 c-w', 'Claude Code'), T('c-dim', '   cwd: C:\\work\\api-server')]),
+    '',
+    T('c-dim', '> ') + '把 src/api/client.ts 的重试逻辑改成指数退避，最多 5 次',
+    '',
+    T('c-w', '● ') + T('c-b1', 'Read') + '(src/api/client.ts)',
+    T('c-dim', '  ⎿  Read 214 lines'),
+    '',
+    T('c-w', '● ') + '我会把固定间隔重试替换为带抖动的指数退避，并把上限提取为常量。',
+    '',
+    T('c-w', '● ') + T('c-b1', 'Update') + '(src/api/client.ts)',
+    T('c-dim', '  ⎿  ') + 'Updated src/api/client.ts with ' + T('c-g', '9 additions') + ' and ' + T('c-r', '3 removals'),
+    T('c-dim', '      41  ') + '  async request(opts: RequestOptions) {',
+    '<span class="bg-del">' + T('c-r', '      42 -') + esc('    for (let i = 0; i < 3; i++) {') + '</span>',
+    '<span class="bg-del">' + T('c-r', '      43 -') + esc('      await sleep(1000);') + '</span>',
+    '<span class="bg-add">' + T('c-g', '      42 +') + esc('    for (let i = 0; i < MAX_RETRIES; i++) {') + '</span>',
+    '<span class="bg-add">' + T('c-g', '      43 +') + esc('      const base = Math.min(2 ** i * 200, 8000);') + '</span>',
+    '<span class="bg-add">' + T('c-g', '      44 +') + esc('      await sleep(base + Math.random() * base * 0.2);') + '</span>',
+    '',
+    T('c-w', '● ') + T('c-b1', 'Bash') + '(npm test -- client)',
+    T('c-dim', '  ⎿  ') + T('c-g', 'PASS') + ' src/api/client.test.ts',
+    T('c-dim', '       Tests: ') + T('c-g', '18 passed') + T('c-dim', ', 18 total'),
+    '',
+    box('c-b', [' ' + T('c-b1', 'Bash command'), '', '   git commit -am "client: exponential backoff"', T('c-dim', '   Commit retry logic changes'), '',
+      ' Do you want to proceed?', ' ' + T('c-b', '❯ 1. Yes'), "   2. Yes, and don't ask again for git commit", '   3. No, and tell Claude what to do differently']),
+    T('c-dim', '  esc to cancel') + '<span class="cursor"> </span>',
+  ].join('\n');
+}
+function pwshScreen() {
+  return [
+    T('c-dim', 'PowerShell 7.4.6'),
+    '',
+    T('c-g', 'PS C:\\work\\api-server> ') + T('c-y', 'npm') + ' run build:watch',
+    '',
+    T('c-dim', '> api-server@2.4.0 build:watch'),
+    T('c-dim', '> tsc -w -p tsconfig.build.json'),
+    '',
+    T('c-dim', '[11:38:02] ') + 'File change detected. Starting incremental compilation...',
+    T('c-dim', '[11:38:04] ') + T('c-r', 'src/api/client.ts(44,13): error TS2304: ') + "Cannot find name 'MAX_RETRIES'.",
+    T('c-dim', '[11:38:04] ') + 'Found ' + T('c-r', '1 error') + '. Watching for file changes.',
+    T('c-dim', '[11:39:17] ') + 'File change detected. Starting incremental compilation...',
+    T('c-dim', '[11:39:18] ') + 'Found ' + T('c-g', '0 errors') + '. Watching for file changes.',
+    '<span class="cursor"> </span>',
+  ].join('\n');
+}
+
+const TERM_STATE = {
+  active: { tag: tag('<span class="dot dot-primary"></span>接管中', 'tag-primary') },
+  reclaimed: { tag: tag('已被本地收回', 'tag-warn'), h: '控制权已被本地收回', p: '本地 Tether 已收回该会话的控制，网页端输入已停止。', btn: '重新接管' },
+  disabled: { tag: tag('本机未允许接管', 'tag-warn'), h: '本机未允许接管', p: '该机器在 Tether 设置中关闭了远程接管，请在本地开启后重试。', btn: '重试' },
+  exited: { tag: tag('会话已退出'), h: '会话已退出', p: '远程会话进程已结束（退出码 0），终端内容为最后画面。', btn: '返回机器列表' },
+  offline: { tag: tag('<span class="dot"></span>机器离线'), h: '机器离线', p: '与该机器的连接已断开，重新上线后可再次接管。', btn: '返回机器列表' },
+};
+
+function renderTerm() {
+  const m = MACHINES.find((x) => x.id === termMachine);
+  const s = m.sessions.find((x) => x.id === termSess);
+  $('t-name').textContent = s.name;
+  $('t-sub').textContent = `${m.name} · ${s.host ? 'SSH ' + s.host : s.cwd} · ${s.cmd}`;
+  $('term').innerHTML = s.cmd === 'claude' ? claudeScreen() : pwshScreen();
+  $('t-foot-l').textContent = `${s.host ? s.host : m.name} · 120×38 · 输入将直接发送到远程会话`;
+  applyTermState();
+}
+function applyTermState() {
+  const st = $('t-demo').value, cfg = TERM_STATE[st];
+  $('t-tag').innerHTML = cfg.tag;
+  const active = st === 'active';
+  $('t-wrap').classList.toggle('inactive', !active);
+  $('t-end').hidden = !active;
+  document.querySelectorAll('#keybar button').forEach((b) => (b.disabled = !active));
+  const ov = $('t-ov');
+  ov.hidden = active;
+  if (!active) ov.innerHTML = `${cfg.tag}<h4>${cfg.h}</h4><p>${cfg.p}</p><button class="btn ${cfg.btn.startsWith('返回') ? '' : 'btn-primary'}" data-ov="${st}">${cfg.btn}</button>`;
+  requestAnimationFrame(() => { const t = $('term'); t.scrollTop = t.scrollHeight; });
+}
+
+/* ---------- 审计 ---------- */
+function renderAudit() {
+  const ev = $('f-ev').value, mm = $('f-m').value, q = $('f-q').value.trim().toLowerCase();
+  const rows = AUDITS.filter((a) => (!ev || a[1] === ev) && (!mm || a[2] === mm) && (!q || (a[3] + a[4]).toLowerCase().includes(q)));
+  const evTag = (e) => tag(AUDIT[e][0], AUDIT[e][1]);
+  $('a-tbody').innerHTML = rows.map((a) => `<tr><td class="mono">${a[0]}</td><td>${evTag(a[1])}<span class="code">${a[1]}</span></td><td>${esc(a[2])}</td><td>${esc(a[3])}</td><td class="mono">${a[4]}</td><td style="color:var(--text-3)">${esc(a[5])}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">无匹配记录</td></tr>';
+  $('a-cards').innerHTML = rows.map((a) => `<div class="a-card"><div class="a-card-top">${evTag(a[1])}<span class="code" style="margin:0">${a[1]}</span><time>${a[0].slice(5)}</time></div>
+    <div class="a-card-m">${esc(a[2])} / <b style="font-weight:500">${esc(a[3])}</b></div><div class="a-card-s">${a[4]} · ${esc(a[5])}</div></div>`).join('')
+    || '<div class="empty">无匹配记录</div>';
+}
+for (const [k, v] of Object.entries(AUDIT)) $('f-ev').insertAdjacentHTML('beforeend', `<option value="${k}">${v[0]}（${k}）</option>`);
+for (const m of MACHINES) $('f-m').insertAdjacentHTML('beforeend', `<option>${m.name}</option>`);
+$('f-go').onclick = renderAudit;
+$('f-ev').onchange = $('f-m').onchange = renderAudit;
+$('f-q').oninput = renderAudit;
+$('f-reset').onclick = () => { $('f-ev').value = $('f-m').value = $('f-q').value = ''; renderAudit(); };
+
+/* ---------- 主题 ---------- */
+function currentTheme() {
+  const t = document.documentElement.dataset.theme;
+  if (t) return t;
+  return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  document.querySelectorAll('.nav-right [data-theme-toggle] use').forEach((u) => u.setAttribute('href', t === 'dark' ? '#i-sun' : '#i-moon'));
+  try { localStorage.setItem('hub-theme', t); } catch (e) {}
+}
+document.querySelectorAll('[data-theme-toggle]').forEach((b) => (b.onclick = () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark')));
+const qs = new URLSearchParams(location.search);
+let saved = null;
+try { saved = localStorage.getItem('hub-theme'); } catch (e) {}
+setTheme(qs.get('theme') || saved || currentTheme());
+
+/* ---------- 路由 ---------- */
+function route() {
+  const r = (location.hash || '#main').slice(1);
+  const view = ['login', 'main', 'term', 'audit'].includes(r) ? r : 'main';
+  document.body.className = 'r-' + view;
+  $('v-login').hidden = view !== 'login';
+  $('app').hidden = view === 'login';
+  for (const v of ['main', 'term', 'audit']) $('v-' + v).hidden = view !== v;
+  document.querySelector('.tabbar').hidden = view === 'term';
+  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (view === 'term' ? 'main' : view)));
+  document.querySelectorAll('#proto a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === '#' + view));
+  if (view !== 'main') closeDrawer();
+  if (view === 'main') renderMain();
+  if (view === 'term') renderTerm();
+  if (view === 'audit') renderAudit();
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', route);
+
+document.addEventListener('click', (e) => {
+  const take = e.target.closest('[data-take]');
+  if (take) {
+    e.preventDefault(); e.stopPropagation();
+    [termMachine, termSess] = take.dataset.take.split(':');
+    $('t-demo').value = 'active';
+    closeDrawer();
+    location.hash === '#term' ? renderTerm() : (location.hash = '#term');
+    return;
+  }
+  const ov = e.target.closest('[data-ov]');
+  if (ov) {
+    if (ov.textContent.startsWith('返回')) location.hash = '#main';
+    else { $('t-demo').value = 'active'; applyTermState(); }
+    return;
+  }
+  const card = e.target.closest('.card');
+  if (card) openDrawer(card.dataset.m);
+});
+$('mask').onclick = $('d-close').onclick = closeDrawer;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('drawer').hidden) closeDrawer(); });
+$('seg-filter').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  filter = b.dataset.f;
+  $('seg-filter').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+  renderMain();
+};
+$('q').oninput = (e) => { query = e.target.value; renderMain(); };
+$('t-demo').onchange = applyTermState;
+$('t-back').onclick = $('t-close').onclick = $('t-end').onclick = () => (location.hash = '#main');
+
+const SSE = [['ok', '实时连接'], ['retry', '重连中 3s'], ['off', '已断开']];
+let sseI = 0;
+$('sse').onclick = () => { sseI = (sseI + 1) % 3; $('sse').className = 'sse ' + SSE[sseI][0]; $('sse-t').textContent = SSE[sseI][1]; };
+
+/* 手机软键盘：点终端唤起输入；visualViewport 让全屏终端跟随可视区域，底部行不被键盘遮住 */
+const kbInput = document.createElement('textarea');
+kbInput.setAttribute('aria-hidden', 'true');
+kbInput.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0';
+document.body.appendChild(kbInput);
+$('term').addEventListener('click', () => { if (matchMedia('(max-width: 768px)').matches) kbInput.focus(); });
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const sync = () => {
+    document.documentElement.style.setProperty('--vvh', vv.height + 'px');
+    document.documentElement.style.setProperty('--vvtop', vv.offsetTop + 'px');
+    if (location.hash === '#term') { const t = $('term'); t.scrollTop = t.scrollHeight; }
+  };
+  vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync); sync();
+}
+
+route();
+if (qs.get('drawer') && location.hash !== '#term') openDrawer(qs.get('drawer'));
+if (qs.get('state') && location.hash === '#term') { $('t-demo').value = qs.get('state'); applyTermState(); }
+</script>
+</body>
+</html>
