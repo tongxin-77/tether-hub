@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { after, before, test } from 'node:test';
+import { HUB_VERSION } from '../src/server.js';
 import { createToken, readData, revokeToken } from '../src/store.js';
 import { Client, cookie, setup, waitFor, type Ctx } from './helpers.js';
 
@@ -34,7 +35,7 @@ test('hello → welcome，机器上线并持久化', async () => {
   await c.opened;
   c.hello('m-welcome');
   const w = await c.next('welcome');
-  assert.deepEqual(w, { type: 'welcome', proto: 2, hubVersion: '0.1.0' });
+  assert.deepEqual(w, { type: 'welcome', proto: 2, hubVersion: HUB_VERSION });
   const m = ctx.hub.agents.machines.get('m-welcome')!;
   assert.equal(m.online, true);
   assert.equal(m.tokenName, 'pc1');
@@ -116,7 +117,7 @@ test('probe 连接：回 welcome，但常驻连接不收到 replaced、Web 状�
   const probe = new Client(ctx.wsUrl, ctx.token);
   await probe.opened;
   probe.hello('m-probe', { machineName: 'PROBE-NAME', version: '9.9.9', probe: true });
-  assert.deepEqual(await probe.next('welcome'), { type: 'welcome', proto: 2, hubVersion: '0.1.0' });
+  assert.deepEqual(await probe.next('welcome'), { type: 'welcome', proto: 2, hubVersion: HUB_VERSION });
   probe.send({ type: 'sessions', sessions: [] });
   await new Promise((r) => setTimeout(r, 150));
   probe.ws.close();

@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.2.0] - 2026-11-15
+
 ### 新增
 
 - 检查更新：启动时与每 6 小时查询 GitHub Releases 最新版本（`HUB_UPDATE_CHECK=0` 关闭自动检查，`HUB_UPDATE_API` 可覆盖地址），网页顶栏显示当前版本，有新版本时提示并可查看更新说明、手动检查。
@@ -21,5 +23,6 @@
 - 审计：接管的开始、结束、被拒、本地收回、断线等事件写入 `audit.jsonl`，网页可筛选查看。
 - Web 管理界面：管理员密码登录（限流），主从布局（机器列表 + 会话详情），「Claude 等待确认」醒目提醒，浅色 / 深色主题，适配手机（两级页面、全屏终端与按键条）。
 
-[未发布]: https://github.com/tongxin-77/tether-hub/compare/v0.1.0...HEAD
+[未发布]: https://github.com/tongxin-77/tether-hub/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.1.0
