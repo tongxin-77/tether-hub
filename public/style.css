@@ -131,7 +131,7 @@ button.small { padding: 2px 12px; font-size: 12px; }
 .term-title { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .term-status { flex: 1; color: var(--sage); font-size: 13px; font-weight: 700; }
 .term-status.ended { color: var(--rose); }
-.term-box { flex: 1; min-height: 0; background: #000; border-radius: var(--r-md); padding: 6px; overflow: hidden; }
+.term-box { flex: 1; min-height: 0; box-sizing: content-box; /* FitAddon 按 computed height 算行数，border-box 会把内边距算进去，最后一行被裁 */  background: #000; border-radius: var(--r-md); padding: 6px; overflow: hidden; }
 
 @media (max-width: 640px) {
   .audit-wrap { padding: 0 16px 32px; }
