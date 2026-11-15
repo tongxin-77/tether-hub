@@ -22,15 +22,16 @@
 **hello**（连接建立后第一条，必须）
 
 ```json
-{ "type": "hello", "proto": 1, "machineId": "9f1c…", "machineName": "DEV-PC", "version": "0.4.0" }
+{ "type": "hello", "proto": 1, "machineId": "9f1c…", "machineName": "DEV-PC", "version": "0.4.0", "probe": false }
 ```
 
 - `machineId`：稳定机器 ID。daemon 首次需要时生成 UUID v4，保存在 `%APPDATA%\tether\machine-id`（dev 构建为 `tether-dev`），之后不变。
 - `machineName`：`COMPUTERNAME` 环境变量。
 - `version`：Tether 版本。
+- `probe`（可选，默认 `false`）：`true` 表示这是「测试连接」的探测连接。hub 照常校验并回 `welcome`，但**不登记、不替换**同一 `machineId` 的常驻连接，也不更新机器档案；探测连接随后由客户端关闭，hub 收到 `sessions` 时忽略。
 - 字段约束：`proto` 必须是数字（缺失或非数字按 `bad_hello`）；`machineId` 1–64 字符，`machineName`、`version` 不超过 256 字符，超出按 `bad_hello`。
 
-**sessions**（收到 `welcome` 后立即发一次；之后会话列表或其中任一字段变化时发送全量，500 ms 防抖）
+**sessions**（收到 `welcome` 后立即发一次；之后在本地 GUI 侧栏刷新会话列表的同一时机发送全量，500 ms 防抖；单纯的终端输出（只改变 `lastActivityAt`）不触发上报，见 H-2.2）
 
 ```json
 { "type": "sessions", "sessions": [ /* proto::SessionInfo 原样序列化 */ ] }
@@ -63,7 +64,7 @@
 
 ## 3. 测试连接（客户端设置）
 
-客户端「测试连接」用当前填写的地址 / token / 明文开关新建一条独立连接：握手 → 发 hello → 等 welcome（总超时 10 s）→ 立即关闭，不发 sessions，不影响已有的常驻连接。结果按阶段区分：地址无效、DNS 解析失败、TCP 连接失败 / 超时、TLS 失败（证书不受信任等）、认证失败（401）、协议不兼容、超时未收到 welcome、成功（耗时 ms，附 hubVersion）。
+客户端「测试连接」用当前填写的地址 / token / 明文开关新建一条独立连接：握手 → 发 hello（`probe: true`）→ 等 welcome（总超时 10 s）→ 立即关闭，不发 sessions，不影响已有的常驻连接。结果按阶段区分：地址无效、DNS 解析失败、TCP 连接失败 / 超时、TLS 失败（证书不受信任等）、认证失败（401）、协议不兼容、超时未收到 welcome、成功（耗时 ms，附 hubVersion）。
 
 ## 4. 状态
 
