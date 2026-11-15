@@ -162,6 +162,8 @@ function renderSession(m, s) {
 
 // ---- 远程接管终端：浏览器 ↔ hub 的 /api/term WebSocket，内容为 base64 透传 ----
 
+/** 整段都是终端查询应答：CPR / DSR、DA1 / DA2、DECRQM、OSC 颜色等、DCS（DECRQSS、XTVERSION） */
+const QUERY_REPLY = /^(?:\x1b\[\d+;\d+R|\x1b\[\d*n|\x1b\[[?>][\d;]*c|\x1b\[\??[\d;]+\$y|\x1b\][^\x07\x1b]*(?:\x07|\x1b\x5c)|\x1bP[^\x1b]*\x1b\x5c)+$/;
 let term = null;
 let termWs = null;
 let onWinResize = null;
@@ -198,7 +200,9 @@ function openTerm(m, s) {
   let ready = false;
   let ended = false;
   const send = (msg) => ready && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
-  t.onData((d) => send({ type: 'input', data: toB64(utf8.encode(d)) }));
+  // xterm 对终端查询的自动应答（光标位置、设备属性、模式、颜色、DCS）不转发：
+  // 本地 GUI 或 daemon 已负责应答，多个查看者都回复会在 PTY 中出现重复应答乱码
+  t.onData((d) => { if (!QUERY_REPLY.test(d)) send({ type: 'input', data: toB64(utf8.encode(d)) }); });
   t.onBinary((d) => send({ type: 'input', data: btoa(d) }));
   t.onResize(({ cols, rows }) => send({ type: 'resize', cols, rows }));
   onWinResize = () => fit.fit();

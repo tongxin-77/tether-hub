@@ -86,7 +86,8 @@
 - 一个会话在一条 hub 连接上最多一个接管。hub 侧多个浏览器查看同一会话时由 hub 复用这一个接管（引用计数），最后一个浏览器离开时 hub 发 `detach`。
 - 接管期间 hub 的 `input` / `resize` 与本地 GUI 的输入 / resize 同等对待，尺寸以最后一次 resize 为准。
 - 本地 GUI 对被接管的会话显示「hub 接管中」标识与「收回」按钮；收回即结束该接管（`detached`，`reason: "reclaimed"`），hub 网页显示「已被本地收回」，不自动重新接管，用户可在网页再次手动接管。
-- hub 连接断开时 daemon 结束该连接上的全部接管（无需发消息）；会话退出时 daemon 发 `detached`（`reason: "exited"`）。
+- hub 连接断开时 daemon 结束该连接上的全部接管（无需发消息）；会话退出或被本地关闭时 daemon 发 `detached`（`reason: "exited"`）。
+- 终端查询（CPR、DA 等）的应答仍由本地 GUI 或 daemon 负责；hub 网页端的 xterm 不把自动应答作为 `input` 发送，避免多个查看者重复应答。
 - 探测连接（`probe: true`）上 hub 不发 `attach`，daemon 收到也拒绝。
 
 ### 6.2 下行（hub → daemon）
@@ -99,7 +100,7 @@
 ```
 
 - `sessionId` 即 `SessionInfo.id`。
-- `input.data`：base64 编码的原始字节（与本地管道 `Input` 的 `data` 相同编码）。
+- `input.data`：base64 编码的原始字节（注意本地管道 `Input` 的 `data` 是明文字符串，编码不同）。
 - 未处于接管中的会话收到 `input` / `resize` / `detach` 一律忽略。`cols`、`rows` 取 1–1000，超出忽略。
 
 ### 6.3 上行（daemon → hub）
