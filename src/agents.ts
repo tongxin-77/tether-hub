@@ -59,6 +59,10 @@ export interface AgentOptions {
 
 const SESSION_KEYS = ['id', 'name', 'cwd', 'command', 'status', 'startedAt', 'lastActivityAt', 'host', 'hostId', 'claude'] as const;
 
+/** 字符串且字符数（按 Unicode 码点计）在 [min, max] 内 */
+const str = (v: unknown, min: number, max: number): v is string =>
+  typeof v === 'string' && [...v].length >= min && [...v].length <= max;
+
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** 只保留 SessionInfo 中已知字段 */
@@ -121,8 +125,8 @@ export class Agents extends EventEmitter {
         if (isObj(msg) && msg.type === 'hello' && typeof msg.proto === 'number' && msg.proto !== PROTO) {
           return fail(ws, 'proto_unsupported', `hub 仅支持协议 ${PROTO}`, 4002);
         }
-        if (!isObj(msg) || msg.type !== 'hello' || msg.proto !== PROTO || typeof msg.machineId !== 'string' || !msg.machineId
-          || typeof msg.machineName !== 'string' || typeof msg.version !== 'string') {
+        if (!isObj(msg) || msg.type !== 'hello' || msg.proto !== PROTO || !str(msg.machineId, 1, 64)
+          || !str(msg.machineName, 0, 256) || !str(msg.version, 0, 256)) {
           return fail(ws, 'bad_hello', '首条消息不是合法的 hello', 4003);
         }
         conn.machineId = msg.machineId;

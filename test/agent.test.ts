@@ -62,6 +62,31 @@ test('首条消息不是合法 hello → bad_hello，关闭码 4003', async () =
   }
 });
 
+test('hello 字段超长 → bad_hello，边界长度可通过', async () => {
+  const hello = (machineId: string, machineName: string, version: string, proto: unknown = 1) =>
+    ({ type: 'hello', proto, machineId, machineName, version });
+  for (const bad of [
+    hello('', 'n', 'v'),
+    hello('a'.repeat(65), 'n', 'v'),
+    hello('m-long', 'n'.repeat(257), 'v'),
+    hello('m-long', 'n', 'v'.repeat(257)),
+    hello('m-long', 'n', 'v', '1'),
+  ]) {
+    const c = new Client(ctx.wsUrl, ctx.token);
+    await c.opened;
+    c.send(bad);
+    assert.equal((await c.next('error')).code, 'bad_hello');
+    assert.equal((await c.closed).code, 4003);
+  }
+  // 按字符计数：64 个汉字 / 256 个汉字仍合法
+  const ok = new Client(ctx.wsUrl, ctx.token);
+  await ok.opened;
+  ok.send(hello('机'.repeat(64), '名'.repeat(256), 'v'.repeat(256)));
+  await ok.next('welcome');
+  ok.ws.close();
+  await ok.closed;
+});
+
 test('hello 超时 → bad_hello，关闭码 4003', async () => {
   const c = new Client(ctx.wsUrl, ctx.token);
   await c.opened;
