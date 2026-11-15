@@ -126,10 +126,18 @@ export class Agents extends EventEmitter {
           return fail(ws, 'proto_unsupported', `hub 仅支持协议 ${PROTO}`, 4002);
         }
         if (!isObj(msg) || msg.type !== 'hello' || msg.proto !== PROTO || !str(msg.machineId, 1, 64)
-          || !str(msg.machineName, 0, 256) || !str(msg.version, 0, 256)) {
+          || !str(msg.machineName, 0, 256) || !str(msg.version, 0, 256)
+          || (msg.probe !== undefined && typeof msg.probe !== 'boolean')) {
           return fail(ws, 'bad_hello', '首条消息不是合法的 hello', 4003);
         }
         conn.machineId = msg.machineId;
+        if (msg.probe) {
+          // 探测连接（客户端「测试连接」）：只回 welcome，不登记 / 不替换常驻连接、不更新档案；
+          // 它不在 conns 中，之后的 sessions 与关闭都会被下方的「是否当前连接」检查忽略
+          send(ws, { type: 'welcome', proto: PROTO, hubVersion: this.opt.hubVersion });
+          this.opt.log(`探测连接：${msg.machineName}（${msg.machineId}，token ${token.name}，${addr}）`);
+          return;
+        }
         this.online(conn, msg.machineName, msg.version, token.name, addr);
         return;
       }

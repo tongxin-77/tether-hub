@@ -87,6 +87,61 @@ test('hello 字段超长 → bad_hello，边界长度可通过', async () => {
   await ok.closed;
 });
 
+test('probe 不是布尔值 → bad_hello', async () => {
+  for (const probe of ['true', 1, null]) {
+    const c = new Client(ctx.wsUrl, ctx.token);
+    await c.opened;
+    c.hello('m-probe-bad', { probe });
+    assert.equal((await c.next('error')).code, 'bad_hello');
+    assert.equal((await c.closed).code, 4003);
+  }
+});
+
+test('probe 连接：回 welcome，但常驻连接不收到 replaced、Web 状态与机器档案不变', async () => {
+  const ck = await cookie(ctx.base);
+  const state = async () => (await fetch(`${ctx.base}/api/state`, { headers: { cookie: ck } })).json();
+
+  // 常驻连接在线并已上报会话
+  const main = new Client(ctx.wsUrl, ctx.token);
+  await main.opened;
+  main.hello('m-probe', { machineName: 'MAIN-PC', version: '0.4.0' });
+  await main.next('welcome');
+  const now = Date.now();
+  main.send({ type: 'sessions', sessions: [{ id: 1, name: 's1', cwd: 'C:\\', command: 'pwsh', status: 'running', startedAt: now, lastActivityAt: now }] });
+  await waitFor(() => ctx.hub.agents.machines.get('m-probe')?.sessions.length === 1);
+  const before = JSON.stringify((await state()).machines.find((m: any) => m.machineId === 'm-probe'));
+  const recBefore = JSON.stringify(readData(ctx.dir).machines.find((r) => r.machineId === 'm-probe'));
+
+  // 同一 machineId 的探测连接，名称 / 版本不同，还多发一条 sessions
+  const probe = new Client(ctx.wsUrl, ctx.token);
+  await probe.opened;
+  probe.hello('m-probe', { machineName: 'PROBE-NAME', version: '9.9.9', probe: true });
+  assert.deepEqual(await probe.next('welcome'), { type: 'welcome', proto: 1, hubVersion: '0.1.0' });
+  probe.send({ type: 'sessions', sessions: [] });
+  await new Promise((r) => setTimeout(r, 150));
+  probe.ws.close();
+  assert.equal((await probe.closed).code, 1005);
+  await new Promise((r) => setTimeout(r, 150));
+
+  assert.equal(main.messages.some((m) => m.type === 'error'), false, '常驻连接不应收到 replaced');
+  assert.equal(main.ws.readyState, main.ws.OPEN);
+  assert.equal(JSON.stringify((await state()).machines.find((m: any) => m.machineId === 'm-probe')), before, 'Web 状态不变');
+  assert.equal(JSON.stringify(readData(ctx.dir).machines.find((r) => r.machineId === 'm-probe')), recBefore, '机器档案不变');
+
+  // 机器从未上线过时，probe 也不会登记新机器
+  const p2 = new Client(ctx.wsUrl, ctx.token);
+  await p2.opened;
+  p2.hello('m-probe-new', { probe: true });
+  await p2.next('welcome');
+  p2.ws.close();
+  await p2.closed;
+  assert.equal(ctx.hub.agents.machines.has('m-probe-new'), false);
+  assert.equal(readData(ctx.dir).machines.some((r) => r.machineId === 'm-probe-new'), false);
+
+  main.ws.close();
+  await main.closed;
+});
+
 test('hello 超时 → bad_hello，关闭码 4003', async () => {
   const c = new Client(ctx.wsUrl, ctx.token);
   await c.opened;
