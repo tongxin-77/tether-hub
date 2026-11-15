@@ -6,7 +6,7 @@
 ## 1. 连接
 
 - 地址：客户端设置中填写 **服务器地址**，形如 `192.168.1.10:8443`、`hub.example.com` 或完整 URL `wss://hub.example.com:8443`。
-  - 未写协议时默认 `wss://`；未写端口时 wss 用 443、ws 用 80。
+  - 未写协议时默认 `wss://`；客户端勾选「允许明文连接」时默认 `ws://`。未写端口时 wss 用 443、ws 用 80。
   - 客户端连接路径固定为 `/agent`，即 `wss://<host>:<port>/agent`。
 - **TLS**：默认只允许 `wss://`。`ws://` 明文仅在客户端勾选「允许明文连接（仅限局域网调试）」时可用；hub 未配置证书时须显式开启 `HUB_INSECURE=1` 才以明文监听。
 - **认证**：WebSocket 握手请求带 HTTP 头 `Authorization: Bearer <token>`。token 无效时 hub 以 HTTP 401 拒绝握手（不升级）。

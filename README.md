@@ -21,7 +21,7 @@ pnpm install
 pnpm build
 
 # 1. 准备证书（见下文「自签证书」），签发 token
-pnpm token create dev-pc
+pnpm run token create dev-pc
 
 # 2. 启动
 HUB_TLS_CERT=certs/cert.pem HUB_TLS_KEY=certs/key.pem HUB_ADMIN_PASSWORD='换成强密码' pnpm start
@@ -58,15 +58,15 @@ HUB_INSECURE=1 HUB_ADMIN_PASSWORD=dev pnpm start      # 或 pnpm dev（tsx 直�
 每台机器一个 token，hub 只保存 token 的 SHA-256。
 
 ```sh
-pnpm token create <名称>   # 签发新 token，明文只显示这一次
-pnpm token list            # 列出 token：名称、状态、创建时间、使用它的机器
-pnpm token revoke <名称>   # 吊销
+pnpm run token create <名称>   # 签发新 token，明文只显示这一次
+pnpm run token list              # 列出 token：名称、状态、创建时间、使用它的机器
+pnpm run token revoke <名称>   # 吊销
 ```
 
 - 名称唯一（包括已吊销的）。轮换时用新名称签发，客户端换上新 token 后再吊销旧的。
 - **吊销即时生效**：运行中的 hub 每秒检查一次 `hub.json` 是否变化（`fs.watchFile`），发现 token 被吊销后，立即以 `revoked`（关闭码 4001）断开使用它的连接，之后该 token 握手返回 401。CLI 不需要和 hub 通信，只需和 hub 使用同一个 `HUB_DATA_DIR`。
 - 新签发的 token 同样在约 1 秒内对运行中的 hub 生效，无需重启。
-- `pnpm token` 运行的是编译产物，首次使用前先 `pnpm build`。
+- `pnpm run token` 运行的是编译产物，首次使用前先 `pnpm build`。
 
 ## 数据
 
@@ -89,8 +89,8 @@ mkdir -p certs && openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/key.pe
 在 Tether 设置 → 管理服务器中：
 
 - **服务器地址**：`<IP 或域名>:<端口>`，如 `192.168.1.10:8443`；也可填完整 URL `wss://hub.example.com:8443`。客户端自动连接 `/agent` 路径，地址里不用写。未写端口时 wss 默认 443，所以使用默认 `HUB_PORT=8443` 时必须写上端口。
-- **token**：`pnpm token create` 打印的那一串（`th_` 开头）。
-- hub 以 `HUB_INSECURE=1` 明文运行时，客户端须勾选「允许明文连接（仅限局域网调试）」并填写 `ws://` 地址。
+- **token**：`pnpm run token create <名称>` 打印的那一串（`th_` 开头）。
+- hub 以 `HUB_INSECURE=1` 明文运行时，客户端须勾选「允许明文连接（仅限局域网调试）」，地址可直接写 `IP:端口`（勾选后未写协议默认 `ws://`）。
 
 填写后可点「测试连接」验证。
 
