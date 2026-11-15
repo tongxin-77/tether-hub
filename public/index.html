@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tether Hub</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<section id="login" class="login" hidden>
+  <form id="login-form" class="card login-card">
+    <div class="brand"><span class="logo">T</span>Tether Hub</div>
+    <label for="password">管理员密码</label>
+    <input id="password" type="password" autocomplete="current-password" required autofocus>
+    <button type="submit">登录</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</section>
+
+<section id="main" hidden>
+  <header class="top">
+    <div class="brand"><span class="logo">T</span>Tether Hub</div>
+    <div id="summary" class="summary"></div>
+    <span id="conn" class="conn" title="实时连接状态"></span>
+    <button id="logout" class="ghost">退出登录</button>
+  </header>
+  <main id="machines" class="machines"></main>
+</section>
+</body>
+</html>
