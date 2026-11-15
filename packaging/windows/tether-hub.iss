@@ -221,6 +221,8 @@ var
   Err: String;
 begin
   Result := True;
+  { 静默安装时 Inno 仍逐页调用本函数，而普通 MsgBox 不受 /SUPPRESSMSGBOXES 影响会一直等待；参数已在 InitializeSetup 校验 }
+  if WizardSilent then Exit;
   Err := '';
   if CurPageID = CfgPage.ID then Err := CheckBasic(CfgPage.Values[0], CfgPage.Values[1], Trim(CfgPage.Values[2]))
   else if CurPageID = CertPage.ID then Err := CheckCert(CertPage.Values[0], CertPage.Values[1])
