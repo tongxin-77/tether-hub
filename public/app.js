@@ -1,5 +1,6 @@
 // Tether Hub Web 界面：登录、SSE 实时接收机器 / 会话状态并按主从布局渲染；远程接管终端（xterm.js）；审计日志。
 // 版本与更新：顶栏版本按钮 / 新版本胶囊 + 更新面板（检查、一键更新、进度日志、重启后自动刷新）。
+// 机器 token：顶栏「Token」面板（列表、签发并一次性显示明文、页内二次确认吊销）。
 // 页面：#main 机器与会话（手机上为机器列表）、#detail 机器详情（仅手机两级页面用）、#term 接管终端、#audit 审计日志。
 'use strict';
 
@@ -18,6 +19,7 @@ const IC = {
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
   reset: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   up: '<circle cx="12" cy="12" r="9"/><path d="m8 12 4-4 4 4"/><path d="M12 16V8"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="m16 7 3 3"/><path d="m19 4 2 2"/>',
 };
 const ic = (n, c = '') => `<svg class="ic ${c}" viewBox="0 0 24 24" aria-hidden="true">${IC[n]}</svg>`;
 document.querySelectorAll('[data-i]').forEach((e) => (e.outerHTML = ic(e.dataset.i)));
@@ -30,6 +32,8 @@ const EV = {
   update_start: ['开始更新', 't-pri', 'hub 开始一键更新'],
   update_done: ['更新完成', 't-pri', 'hub 更新完成并重启'],
   update_failed: ['更新失败', 't-err', 'hub 更新失败，已回滚'],
+  token_create: ['签发 token', 't-pri', '网页签发 token'],
+  token_revoke: ['吊销 token', 't-warn', '网页吊销 token'],
   start: ['开始接管', 't-pri', '网页端开始接管'],
   end: ['结束接管', '', '最后一个网页端关闭终端'],
   denied: ['拒绝接管', 't-err', '接管被拒绝'],
@@ -53,6 +57,8 @@ let term = null;
 let termWs = null;
 let termRef = null;
 let termRo = null;
+let ctrlOn = false; // 按键条粘滞 Ctrl
+let touch = null; // 终端区单指滑动 / 惯性状态
 
 // ---- 工具 ----
 
@@ -110,6 +116,7 @@ function showLogin(msg) {
   closeTerm();
   showView('login');
   $('upd').hidden = true;
+  closeTok();
   $('login-error').textContent = msg || '';
   $('password').focus();
 }
@@ -203,7 +210,7 @@ function renderMachines() {
       ${n ? `<span class="cnt" title="${n} 个会话等待确认">${n}</span>` : ''}
       <span class="chev only-m">${ic('chevR')}</span></div>`;
   }).join('') || `<div class="empty">${!state ? '加载中…' : all.length ? '没有匹配的机器'
-    : '还没有机器接入。<br>用 <code>pnpm token create &lt;名称&gt;</code> 签发 token，<br>并在 Tether 客户端设置中填写服务器地址与 token。'}</div>`;
+    : '还没有机器接入。<br>在顶栏「Token」中签发 token，<br>并在 Tether 客户端设置中填写服务器地址与 token。'}</div>`;
 }
 
 function claudeTag(c) {
@@ -401,8 +408,19 @@ function connectTerm() {
   const send = (msg) => ready && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
   // xterm 对终端查询的自动应答（光标位置、设备属性、模式、颜色、DCS）不转发：
   // 本地 GUI 或 daemon 已负责应答，多个查看者都回复会在 PTY 中出现重复应答乱码
-  t.onData((d) => { if (!QUERY_REPLY.test(d)) send({ type: 'input', data: toB64(utf8.encode(d)) }); });
+  t.onData((d) => {
+    // 粘滞 Ctrl 只作用于下一个可打印字符（方向键、Esc 等以控制字符开头，不受影响）
+    if (ctrlOn && d.charCodeAt(0) >= 0x20 && d.charCodeAt(0) !== 0x7f) {
+      d = ctrlChar(d[0]) + d.slice(1);
+      setCtrl(false);
+    }
+    if (!QUERY_REPLY.test(d)) send({ type: 'input', data: toB64(utf8.encode(d)) });
+  });
   t.onBinary((d) => send({ type: 'input', data: btoa(d) }));
+  // 滚离底部时显示「回到底部」；上翻期间有新输出 xterm 不会跳回，回到底部后恢复跟随
+  const syncBottom = () => { const b = t.buffer.active; $('t-bottom').hidden = b.viewportY >= b.baseY; };
+  t.onScroll(syncBottom);
+  t.buffer.onBufferChange(syncBottom);
   t.onResize(({ cols, rows }) => {
     send({ type: 'resize', cols, rows });
     if ($('t-size')) $('t-size').textContent = `${cols} × ${rows}`;
@@ -428,6 +446,7 @@ function connectTerm() {
         sizing = false;
         ready = true;
         fit.fit();
+        syncBottom();
         if ($('t-size')) $('t-size').textContent = `${t.cols} × ${t.rows}`;
       });
       setTermState('active');
@@ -453,6 +472,9 @@ function disposeTerm() {
   termRo = null;
   if (term) term.dispose();
   term = null;
+  touch = null;
+  $('t-bottom').hidden = true;
+  setCtrl(false);
 }
 
 /** 离开终端页即断开接管 */
@@ -464,17 +486,96 @@ function closeTerm() {
 }
 
 // 手机按键条：方向键在应用光标键模式（DECCKM）下发 ESC O x；按下时不抢焦点，软键盘保持弹出
-const KEYS = { esc: '\x1b', tab: '\t', ctrlc: '\x03' };
+// Ctrl 为一次性粘滞键：按下高亮，下一个输入字符转为控制字符后自动取消，再按一下取消；Ctrl+方向键发 CSI 1;5 x
+const KEYS = { esc: '\x1b', tab: '\t' };
 const ARROW = { up: 'A', down: 'B', right: 'C', left: 'D' };
+function setCtrl(on) {
+  ctrlOn = on;
+  const b = $('keys').querySelector('[data-key="ctrl"]');
+  b.classList.toggle('on', on);
+  b.setAttribute('aria-pressed', String(on));
+}
+/** Ctrl+字母 / @ [ \ ] ^ _ 转 C0 控制字符，Ctrl+空格 = NUL，Ctrl+? = DEL；其他字符原样 */
+function ctrlChar(ch) {
+  if (ch === ' ') return '\x00';
+  if (ch === '?') return '\x7f';
+  const c = ch.toUpperCase().charCodeAt(0);
+  return c >= 0x40 && c <= 0x5f ? String.fromCharCode(c & 0x1f) : ch;
+}
 $('keys').addEventListener('mousedown', (e) => e.preventDefault());
 $('keys').addEventListener('click', (e) => {
   const b = e.target.closest('[data-key]');
   if (!b || !term) return;
   const k = b.dataset.key;
-  const seq = ARROW[k] ? `${term.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b['}${ARROW[k]}` : KEYS[k];
+  if (k === 'ctrl') return setCtrl(!ctrlOn);
+  let seq = KEYS[k];
+  if (ARROW[k] && ctrlOn) {
+    seq = `\x1b[1;5${ARROW[k]}`;
+    setCtrl(false);
+  } else if (ARROW[k]) seq = `${term.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b['}${ARROW[k]}`;
   term.input(seq, true);
 });
 $('term-wrap').addEventListener('click', () => term && term.focus());
+$('t-bottom').addEventListener('mousedown', (e) => e.preventDefault());
+$('t-bottom').addEventListener('click', (e) => {
+  e.stopPropagation(); // 不触发上面的聚焦，避免手机上点按钮弹出键盘
+  if (term) term.scrollToBottom();
+});
+
+// 触屏单指上下滑动（xterm 6 自身不处理触摸滚动）：
+// 普通缓冲区滚动历史，松手后带惯性；全屏程序（备用缓冲区）没有历史，逐行派发滚轮事件交给 xterm 处理——
+// 程序开了鼠标跟踪就按其协议发滚轮序列，否则发 ↑ ↓（遵循 DECCKM），与桌面端滚轮行为一致。
+// 轻点不拦截，仍由 xterm 的 mousedown 聚焦并弹出键盘
+function touchScroll(px) {
+  const screen = term.element.querySelector('.xterm-screen');
+  touch.acc += px / (screen.clientHeight / term.rows);
+  const n = Math.trunc(touch.acc);
+  if (!n) return;
+  touch.acc -= n;
+  if (term.buffer.active.type === 'normal') return term.scrollLines(-n);
+  for (let i = 0; i < Math.abs(n); i++) {
+    term.element.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: n > 0 ? -1 : 1, deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: touch.x, clientY: touch.cy, bubbles: true, cancelable: true,
+    }));
+  }
+}
+const tbox = $('term-box');
+tbox.addEventListener('touchstart', (e) => {
+  touch = null;
+  if (!term || e.touches.length !== 1) return;
+  const p = e.touches[0];
+  touch = { x: p.clientX, y0: p.clientY, cy: p.clientY, t: e.timeStamp, v: 0, acc: 0, moving: false };
+}, { passive: true });
+tbox.addEventListener('touchmove', (e) => {
+  if (!touch || !term || e.touches.length !== 1) return;
+  const p = e.touches[0];
+  if (!touch.moving && Math.abs(p.clientY - touch.y0) < 8) return;
+  touch.moving = true;
+  e.preventDefault();
+  const dy = p.clientY - touch.cy;
+  const dt = e.timeStamp - touch.t;
+  if (dt > 0) touch.v = 0.8 * (dy / dt) + 0.2 * touch.v; // px/ms，平滑
+  touch.cy = p.clientY;
+  touch.t = e.timeStamp;
+  touchScroll(dy);
+}, { passive: false });
+tbox.addEventListener('touchend', (e) => {
+  const s = touch;
+  // 惯性只用于滚动历史；停顿后再松手（> 80ms 无移动）不甩出去
+  if (!s || !s.moving || !term || term.buffer.active.type !== 'normal' || e.timeStamp - s.t > 80) return;
+  let v = s.v;
+  let last = performance.now();
+  const step = (now) => {
+    if (touch !== s || !term) return; // 新的触摸或终端已关闭即停止
+    v *= Math.pow(0.95, (now - last) / 16);
+    if (Math.abs(v) < 0.05) return;
+    touchScroll(v * (now - last));
+    last = now;
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+});
+tbox.addEventListener('touchcancel', () => (touch = null));
 const leaveTerm = () => (location.hash = isM() && selected() ? '#detail' : '#main');
 $('t-close').addEventListener('click', leaveTerm);
 $('t-close-m').addEventListener('click', leaveTerm);
@@ -517,6 +618,7 @@ function renderAudit() {
   const shown = rows.slice(auditPage * PAGE, (auditPage + 1) * PAGE);
   const tag = (e) => `<span class="tag ${EV[e] ? EV[e][1] : ''}"><span class="ev">${esc(e)}</span>${EV[e] ? EV[e][0] : ''}</span>`;
   const desc = (a) => esc(a.to ? `${a.from} → ${a.to}${a.reason ? `：${a.reason}` : ''}`
+    : a.tokenName ? `${EV[a.event] ? EV[a.event][2] : ''}「${a.tokenName}」`
     : a.reason ? REASON[a.reason] || a.reason : EV[a.event] ? EV[a.event][2] : '');
   const sess = (a) => (a.sessionId === undefined ? '<span class="muted">—</span>' : `${esc(a.sessionName || '会话')} <span class="muted">#${a.sessionId}</span>`);
   const time = (a) => fullTime(Date.parse(a.time));
@@ -607,7 +709,7 @@ function renderUpdate() {
     <div class="upd-st">${tag}${url && upd.latest ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">发布页${ic('chevR', 'ic-sm')}</a>` : ''}</div>
     ${upd.error ? `<div class="banner">${ic('alertC')}<div><span class="bd">${esc(upd.error)}</span></div></div>` : ''}
     ${st === 'done' ? `<div class="banner def">${ic('info')}<div><span class="bt">${late ? 'hub 长时间未恢复' : '更新完成，正在重启…'}</span>
-      <span class="bd">${late ? 'hub 可能未配置进程管理器（systemd / pm2 / NSSM），请到服务器上手动启动。' : 'hub 恢复后页面将自动刷新，需重新登录。'}</span></div></div>` : ''}
+      <span class="bd">${late ? '请到服务器上检查 hub 是否在运行：安装版查看服务 tether-hub 及 %ProgramData%\\tether-hub\\logs；源码部署需配置 systemd / pm2 / NSSM 等进程管理器。' : 'hub 恢复后页面将自动刷新，需重新登录。'}</span></div></div>` : ''}
     ${newer && upd.notes ? `<div class="upd-sec">更新说明</div><div class="upd-notes">${esc(upd.notes)}</div>` : ''}
     ${upd.log ? `<div class="upd-sec">更新日志</div><pre class="upd-log" id="upd-log">${esc(upd.log)}</pre>` : ''}
     ${st === 'done' ? '' : `<div class="upd-acts">
@@ -669,6 +771,114 @@ $('upd').addEventListener('click', (e) => {
   if (b && !b.disabled) updAction(b.dataset.upd);
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && !$('upd').hidden && closeUpd());
+
+// ---- 机器 token：明文只在签发后显示一次，关闭面板即丢弃 ----
+
+let tokRows = null;
+/** 刚签发的 {name, token} */
+let tokNew = null;
+/** 正在二次确认吊销的 token 名称 */
+let tokAsk = null;
+
+/** 调用 token 接口，返回 [状态码, 响应体]；登录失效时回到登录页，无返回值 */
+async function tokApi(url, body) {
+  try {
+    const r = await fetch(url, body === undefined ? undefined
+      : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 401) return showLogin('登录已失效，请重新登录');
+    return [r.status, await r.json().catch(() => ({}))];
+  } catch {
+    return [0, { error: '无法连接服务器' }];
+  }
+}
+
+async function loadTokens() {
+  const res = await tokApi('/api/tokens');
+  if (!res) return;
+  if (res[0] === 200) tokRows = res[1];
+  else $('tok-err').textContent = res[1].error || `加载失败（${res[0]}）`;
+  renderTokens();
+}
+
+function renderTokens() {
+  $('tok-new').innerHTML = tokNew ? `<div class="banner def">${ic('info')}<div>
+      <span class="bt">已签发「${esc(tokNew.name)}」</span> <span class="bd">明文只显示这一次，关闭面板后无法再次查看，请立即复制到 Tether 客户端。</span>
+      <div class="tok-copy"><input class="input mono" id="tok-plain" readonly value="${esc(tokNew.token)}" aria-label="token 明文"><button class="btn btn-sm btn-primary" data-tok-copy>复制</button></div>
+      <div class="tok-tip" id="tok-tip"></div></div></div>` : '';
+  const acts = (t) => (t.revoked ? '' : tokAsk === t.name
+    ? `<div class="tok-acts"><button class="btn btn-sm" data-tok-cancel>取消</button><button class="btn btn-sm btn-primary" data-tok-revoke="${esc(t.name)}">确认吊销</button></div>`
+    : `<div class="tok-acts"><button class="btn btn-sm" data-tok-ask="${esc(t.name)}">吊销</button></div>`);
+  $('tok-list').innerHTML = (tokRows || []).map((t) => `<div class="tok-row${t.revoked ? ' off' : ''}">
+      <div class="tok-main"><div class="tok-r1"><span class="mono tok-n">${esc(t.name)}</span>${t.revoked ? '<span class="tag">已吊销</span>' : '<span class="tag t-pri"><i class="dot ok"></i>有效</span>'}</div>
+      <div class="tok-r2"><span title="${esc(fullTime(t.createdAt))}">创建于 ${shortTime(t.createdAt)}</span><span>${t.machines.length ? `机器：${esc(t.machines.join('、'))}` : '暂无机器使用'}</span></div>
+      ${tokAsk === t.name ? '<div class="tok-ask">吊销后，使用它的机器约 1 秒内断开，且无法恢复。</div>' : ''}</div>
+      ${acts(t)}</div>`).join('') || `<div class="empty">${tokRows ? '还没有 token，在上方输入名称签发' : '加载中…'}</div>`;
+}
+
+async function revokeTok(name) {
+  const res = await tokApi(`/api/tokens/${encodeURIComponent(name)}/revoke`, {});
+  if (!res) return;
+  tokAsk = null;
+  if (res[0] !== 200) $('tok-err').textContent = res[1].error || `吊销失败（${res[0]}）`;
+  loadTokens();
+}
+
+/** 明文 http（非 localhost）下没有 clipboard API：退回选中文本 + execCommand，仍失败则提示手动复制 */
+async function copyTok() {
+  const box = $('tok-plain');
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(box.value);
+    ok = true;
+  } catch {
+    box.focus();
+    box.setSelectionRange(0, box.value.length);
+    try { ok = document.execCommand('copy'); } catch {}
+  }
+  $('tok-tip').textContent = ok ? '已复制到剪贴板' : '无法自动复制，已选中文本，请手动复制（Ctrl+C / 长按）';
+}
+
+function closeTok() {
+  $('tok').hidden = true;
+  tokNew = null;
+  tokAsk = null;
+  $('tok-err').textContent = '';
+}
+$('tok-btn').addEventListener('click', () => {
+  $('tok').hidden = false;
+  $('tok-err').textContent = '';
+  renderTokens();
+  loadTokens();
+  if (!isM()) $('tok-name').focus();
+});
+$('tok-close').addEventListener('click', closeTok);
+$('tok-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('tok-err').textContent = '';
+  const res = await tokApi('/api/tokens', { name: $('tok-name').value.trim() });
+  if (!res) return;
+  if (res[0] !== 201) return ($('tok-err').textContent = res[1].error || `签发失败（${res[0]}）`);
+  tokNew = res[1];
+  tokAsk = null;
+  $('tok-name').value = '';
+  loadTokens();
+});
+$('tok').addEventListener('click', (e) => {
+  if (e.target === $('tok')) return closeTok();
+  if (e.target.id === 'tok-plain') return e.target.setSelectionRange(0, e.target.value.length);
+  if (e.target.closest('[data-tok-copy]')) return copyTok();
+  const ask = e.target.closest('[data-tok-ask]');
+  if (ask || e.target.closest('[data-tok-cancel]')) {
+    tokAsk = ask ? ask.dataset.tokAsk : null;
+    return renderTokens();
+  }
+  const rv = e.target.closest('[data-tok-revoke]');
+  if (rv) {
+    rv.disabled = true;
+    revokeTok(rv.dataset.tokRevoke);
+  }
+});
+document.addEventListener('keydown', (e) => e.key === 'Escape' && !$('tok').hidden && closeTok());
 
 // ---- 事件绑定 ----
 

@@ -1,4 +1,4 @@
-// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话 / 更新状态变化，/api/term 终端接管 WebSocket。
+// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话 / 更新状态变化，/api/term 终端接管 WebSocket，机器 token 管理。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -7,7 +7,8 @@ import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { MAX_MESSAGE, reject, type Agents, type Machine } from './agents.js';
-import { readAudit } from './audit.js';
+import { appendAudit, readAudit, type TokenAuditRec } from './audit.js';
+import { createToken, readData, revokeToken } from './store.js';
 import type { Updater } from './update.js';
 
 const COOKIE = 'hub_session';
@@ -29,7 +30,7 @@ export interface WebOptions {
   adminPassword: string;
   secure: boolean;
   publicDir: string;
-  /** 审计日志所在目录（HUB_DATA_DIR） */
+  /** 数据目录（HUB_DATA_DIR）：审计日志与 hub.json */
   dataDir: string;
   hubVersion: string;
   log: (msg: string) => void;
@@ -101,7 +102,9 @@ export class Web {
         return json(res, 200, readAudit(this.opt.dataDir, Number.isInteger(n) && n > 0 ? Math.min(n, 1000) : 100));
       }
       if (route === 'GET /api/update') return json(res, 200, this.updateStatus());
-      if (req.method === 'POST' && url.pathname.startsWith('/api/update/') && !sameOrigin(req)) return json(res, 403, { error: '来源不允许' });
+      if (req.method === 'POST' && (url.pathname.startsWith('/api/update/') || url.pathname.startsWith('/api/tokens')) && !sameOrigin(req)) {
+        return json(res, 403, { error: '来源不允许' });
+      }
       if (route === 'POST /api/update/check') {
         void this.updater.check();
         return json(res, 202, this.updateStatus());
@@ -111,6 +114,10 @@ export class Web {
         void this.updater.apply();
         return json(res, 202, this.updateStatus());
       }
+      if (route === 'GET /api/tokens') return this.listTokens(res);
+      if (route === 'POST /api/tokens') return await this.createToken(req, res);
+      const rv = /^\/api\/tokens\/([^/]+)\/revoke$/.exec(url.pathname);
+      if (req.method === 'POST' && rv) return this.revokeToken(req, res, rv[1]);
       return json(res, 404, { error: '不存在' });
     } catch (e) {
       this.opt.log(`请求出错 ${route}：${(e as Error).message}`);
@@ -211,6 +218,63 @@ export class Web {
     json(res, 200, { ok: true });
   }
 
+  /** token 列表：不含 sha256，附使用该 token 的机器名 */
+  private listTokens(res: ServerResponse) {
+    const { tokens, machines } = readData(this.opt.dataDir);
+    json(res, 200, tokens.map((t) => ({
+      name: t.name, revoked: t.revoked, createdAt: t.createdAt,
+      machines: machines.filter((m) => m.tokenName === t.name).map((m) => m.name || m.machineId),
+    })));
+  }
+
+  private async createToken(req: IncomingMessage, res: ServerResponse) {
+    if (!String(req.headers['content-type']).startsWith('application/json')) return json(res, 415, { error: '需要 JSON' });
+    let name: unknown;
+    try {
+      name = JSON.parse(await readBody(req, 4096))?.name;
+    } catch {
+      return json(res, 400, { error: '请求格式错误' });
+    }
+    if (typeof name !== 'string') return json(res, 400, { error: '缺少名称' });
+    let token: string;
+    try {
+      token = createToken(this.opt.dataDir, name);
+    } catch (e) {
+      // 文件系统错误交给外层按 500 处理；其余为名称非法 / 重复
+      if ((e as NodeJS.ErrnoException).code) throw e;
+      return json(res, 400, { error: (e as Error).message });
+    }
+    this.audit({ time: new Date().toISOString(), event: 'token_create', tokenName: name, ip: req.socket.remoteAddress ?? '' });
+    json(res, 201, { name, token });
+  }
+
+  /** 吊销后 server.ts 的 hub.json 轮询会断开使用该 token 的机器 */
+  private revokeToken(req: IncomingMessage, res: ServerResponse, raw: string) {
+    let name: string;
+    try {
+      name = decodeURIComponent(raw);
+    } catch {
+      return json(res, 400, { error: '名称格式错误' });
+    }
+    try {
+      revokeToken(this.opt.dataDir, name);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code) throw e;
+      const exists = readData(this.opt.dataDir).tokens.some((t) => t.name === name);
+      return json(res, exists ? 409 : 404, { error: (e as Error).message });
+    }
+    this.audit({ time: new Date().toISOString(), event: 'token_revoke', tokenName: name, ip: req.socket.remoteAddress ?? '' });
+    json(res, 200, { ok: true });
+  }
+
+  private audit(rec: TokenAuditRec) {
+    try {
+      appendAudit(this.opt.dataDir, rec);
+    } catch (e) {
+      this.opt.log(`写入审计日志失败：${(e as Error).message}`);
+    }
+  }
+
   private events(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -252,7 +316,7 @@ export class Web {
   }
 }
 
-/** Origin 须与 Host 同源（终端 WebSocket 与更新类 POST 的 CSRF 防护） */
+/** Origin 须与 Host 同源（终端 WebSocket 与更新 / token 类 POST 的 CSRF 防护） */
 function sameOrigin(req: IncomingMessage) {
   try {
     return new URL(req.headers.origin ?? '').host === req.headers.host;

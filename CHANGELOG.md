@@ -2,7 +2,15 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.3.0] - 2026-11-15
+
+### 新增
+
+- 网页管理机器 token：顶栏「Token」面板列出 token（名称、状态、创建时间、使用的机器），可签发（明文只显示一次，带复制按钮，明文 http 下退回手动复制）与吊销（页内二次确认，使用它的机器约 1 秒内断开）；签发 / 吊销写入审计日志（`token_create` / `token_revoke`）。
+- Windows 安装包：Release 提供 `tether-hub-<版本>-win-x64-setup.exe`，自带 Node 运行时，安装为开机自启、崩溃自动重启的 Windows 服务（WinSW），向导中设置管理员密码、端口与 TLS 证书（或明确选择明文），自动添加防火墙规则；配置与数据在 `%ProgramData%\tether-hub`（仅管理员可访问），升级保留配置，卸载默认保留数据；支持静默安装参数。开始菜单提供「打开管理网页」与「Token 命令行」。
+- 安装版的网页一键更新改为下载本平台更新包（`tether-hub-<版本>-win-x64.zip`），按 Release 中的 `SHA256SUMS` 校验后替换程序文件，失败自动换回；源码部署的更新方式不变。
+- 发布流程：推送 `v*` tag 后由 GitHub Actions 构建、测试、打包，在 runner 上做静默安装 / 升级 / 卸载冒烟测试，再把安装程序、更新包与 `SHA256SUMS` 上传到对应 Release。
+- 手机远程接管终端：单指滑动滚动历史（带惯性），全屏程序中滑动发送方向键或滚轮；滚离底部时显示「回到底部」按钮，期间新输出不再强制跳回；触屏设备显示 Esc / Tab / Ctrl / 方向键快捷键栏，Ctrl 为一次性粘滞键（替代原「Ctrl+C」键）。
 
 ## [0.2.0] - 2026-11-15
 
@@ -23,6 +31,6 @@
 - 审计：接管的开始、结束、被拒、本地收回、断线等事件写入 `audit.jsonl`，网页可筛选查看。
 - Web 管理界面：管理员密码登录（限流），主从布局（机器列表 + 会话详情），「Claude 等待确认」醒目提醒，浅色 / 深色主题，适配手机（两级页面、全屏终端与按键条）。
 
-[未发布]: https://github.com/tongxin-77/tether-hub/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.3.0
 [0.2.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 {
   "name": "tether-hub",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Tether 自托管管理服务器",
   "license": "Apache-2.0",
@@ -14,7 +14,8 @@
     "dev": "tsx src/main.ts",
     "token": "node dist/token-cli.js",
     "test": "tsx --test \"test/**/*.test.ts\"",
-    "test-client": "tsx scripts/test-client.ts"
+    "test-client": "tsx scripts/test-client.ts",
+    "package": "tsx scripts/package.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

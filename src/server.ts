@@ -9,11 +9,13 @@ import { fileURLToPath } from 'node:url';
 import { Agents } from './agents.js';
 import { appendAudit } from './audit.js';
 import { dataFile, readData, updateData, type TokenRec } from './store.js';
-import { DEFAULT_UPDATE_API, Updater } from './update.js';
+import { DEFAULT_UPDATE_API, readInstall, Updater } from './update.js';
 import { Web } from './web.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const HUB_VERSION: string = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+/** 安装版标记（安装包内的 install.json），源码部署时为 undefined */
+export const HUB_INSTALL = readInstall(root);
 
 export interface HubOptions {
   port: number;

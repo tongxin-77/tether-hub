@@ -2,7 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { HUB_VERSION, startHub } from './server.js';
+import { HUB_INSTALL, HUB_VERSION, startHub } from './server.js';
 
 function die(msg: string): never {
   console.error(`启动失败：${msg}`);
@@ -43,11 +43,12 @@ const hub = await startHub({
   port, host, tls, adminPassword, dataDir,
   updateCheck: env.HUB_UPDATE_CHECK !== '0',
   updateApi: env.HUB_UPDATE_API || undefined,
-  // 一键更新成功：正常关闭后以退出码 0 退出，由进程管理器拉起新版本
+  // 一键更新成功：正常关闭后退出，由进程管理器拉起新版本。源码部署以退出码 0 退出；
+  // 安装版的服务包装器 WinSW 把退出码 0 当作正常停止、不会拉起，故以非 0 退出触发服务的失败重启
   onUpdated: async () => {
     closing = true;
     await hub.close();
-    process.exit(0);
+    process.exit(HUB_INSTALL ? 1 : 0);
   },
 }).catch((e: Error) => die(e.message));
 const scheme = tls ? 'https' : 'http';

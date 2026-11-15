@@ -137,6 +137,25 @@ a{color:var(--primary);text-decoration:none}
 .upd-log{margin:0;font:12px/1.55 var(--mono);background:var(--t-bg);color:var(--t-fg);border-radius:10px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .upd-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 
+/* 机器 token 面板 */
+.tok-form{display:flex;gap:8px;margin-top:10px}
+.tok-form .input{flex:1;min-width:0}
+#tok-err{margin:6px 0 0}
+#tok-new .banner{margin:12px 0 0}
+.tok-copy{display:flex;gap:8px;margin-top:8px}
+.tok-copy .input{flex:1;min-width:0;height:28px;font-size:12px;background:var(--surface)}
+.tok-tip{font-size:12px;color:var(--text-3);margin-top:4px}
+.tok-tip:empty{display:none}
+.tok-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px}
+.tok-row:nth-child(even){background:var(--hover)}
+.tok-main{flex:1;min-width:0}
+.tok-r1{display:flex;align-items:center;gap:8px;min-width:0}
+.tok-n{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tok-r2{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--text-3);margin-top:3px;overflow-wrap:anywhere}
+.tok-row.off .tok-n{color:var(--text-3)}
+.tok-ask{font-size:12px;color:var(--warning-ink);margin-top:4px}
+.tok-acts{display:flex;gap:6px;flex:none}
+
 /* 等待确认提醒 */
 .alert-confirm{flex:none;margin:0 20px 12px;border-radius:12px;background:var(--warning-soft);color:var(--warning-ink);font-size:13px}
 .ac-head{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 14px;min-height:44px}
@@ -226,12 +245,24 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
 .banner > .ic{margin-top:2px;color:var(--warning)}
 .banner.def{background:var(--fill)} .banner.def .bt{color:var(--text)} .banner.def > .ic{color:var(--text-3)}
 /* 外层负责圆角与留白，内层 .term-box 无 padding：FitAddon 按父元素 computed 尺寸算行列，内边距放在内层会裁掉最后一行 */
-.term{flex:1;min-height:0;display:flex;background:var(--t-bg);border-radius:14px;padding:14px 18px 16px}
-.term-box{flex:1;min-width:0;min-height:0;overflow:hidden}
+.term{position:relative;flex:1;min-height:0;display:flex;background:var(--t-bg);border-radius:14px;padding:14px 18px 16px}
+/* 触屏滑动由 app.js 接管（滚动历史 / 全屏程序发方向键），不让浏览器平移页面或下拉刷新 */
+.term-box{flex:1;min-width:0;min-height:0;overflow:hidden;touch-action:none}
+.to-bottom{position:absolute;right:16px;bottom:16px;z-index:5;height:32px;padding:0 14px;border:0;border-radius:16px;background:var(--surface);color:var(--text);font-size:13px;box-shadow:var(--shadow);cursor:pointer}
+.to-bottom:hover{background:var(--hover)}
 .term.ro .term-box{opacity:.55}
 .term-foot{flex:none;display:flex;gap:16px;font-size:12px;color:var(--text-3);padding:0 4px}
 .term-foot .end{margin-left:auto}
 .keys{display:none}
+/* 手机或触屏设备（如平板）显示快捷键栏，位于终端下方、软键盘上方 */
+@media (max-width:768px),(pointer:coarse){
+  .keys{display:flex;flex:none;gap:6px;padding:6px 8px calc(6px + env(safe-area-inset-bottom));background:var(--t-keys)}
+  .keys button{flex:1 1 0;min-width:0;height:44px;border:0;border-radius:10px;background:var(--t-key);color:#efe6da;font:13px var(--mono);cursor:pointer;touch-action:manipulation}
+  .keys button:active{background:#544840}
+  .keys button.on{background:var(--primary);color:#fff}
+  .keys.dis button{opacity:.4;pointer-events:none}
+  .to-bottom{height:40px;right:12px;bottom:12px;border-radius:20px}
+}
 
 /* ========== 手机 ========== */
 @media (max-width:768px){
@@ -239,12 +270,13 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
   .only-m{display:revert}
   .topbar{height:52px;padding:0 4px 0 12px;gap:10px}
   .brand .txt{display:none}
-  .nav a{height:44px;padding:0 12px}
+  .nav a{height:44px;padding:0 8px}
   .sse{padding:0 8px}
   .sse .lbl{display:none}
   .top-right{gap:0}
   .top-right .btn-ghost{height:44px;padding:0 10px}
   .top-right .btn-icon{width:44px;padding:0}
+  .top-right .tok-btn{padding:0 6px}
   .upd-btn .lbl{display:none}
   .top-right .upd-btn{width:44px;padding:0;border-radius:10px}
   .upd-btn.new,.upd-btn.new:hover{background:transparent;color:var(--primary)}
@@ -258,6 +290,11 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
   .modal .desc{grid-template-columns:repeat(3,1fr);gap:10px}
   .upd-acts .btn{flex:1;height:44px}
   .upd-st a{min-height:44px}
+  .tok-form .input,.tok-form .btn{height:44px}
+  .tok-copy .input,.tok-copy .btn{height:40px}
+  .tok-row{flex-wrap:wrap;padding:10px 8px}
+  .tok-acts{width:100%;justify-content:flex-end}
+  .tok-acts .btn{height:40px;min-width:64px}
 
   .alert-confirm{margin:0 12px 10px}
   .ac-head{cursor:pointer;padding:0 12px 0 14px;min-height:46px}
@@ -335,9 +372,4 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
   .banner .act{margin-left:26px;width:100%}
   .banner .act .btn{height:44px}
   .term{border-radius:0;padding:6px 8px 8px}
-  .keys{display:flex;flex:none;gap:6px;padding:6px 8px calc(6px + env(safe-area-inset-bottom));background:var(--t-keys)}
-  .keys button{flex:1 1 0;min-width:0;height:44px;border:0;border-radius:10px;background:var(--t-key);color:#efe6da;font:13px var(--mono);cursor:pointer;touch-action:manipulation}
-  .keys button.w{flex-grow:1.5}
-  .keys button:active{background:#544840}
-  .keys.dis button{opacity:.4;pointer-events:none}
 }

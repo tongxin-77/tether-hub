@@ -14,7 +14,7 @@
 ## 远程接管
 
 - 前提：客户端设置中开启「允许 hub 远程接管本机会话」（默认关闭；关闭时网页显示「本机未允许接管」）。
-- 在线机器的未退出会话旁有「接管」按钮，点击后打开全屏终端页（xterm.js）：先显示屏幕快照，再接实时输出；键入、粘贴（支持多行）会发送到会话，窗口尺寸变化会同步 resize。有选区时 Ctrl+C 复制，Ctrl+V 粘贴。手机上点终端唤起软键盘，底部按键条提供 Esc / Tab / Ctrl+C / 方向键。
+- 在线机器的未退出会话旁有「接管」按钮，点击后打开全屏终端页（xterm.js）：先显示屏幕快照，再接实时输出；键入、粘贴（支持多行）会发送到会话，窗口尺寸变化会同步 resize。有选区时 Ctrl+C 复制，Ctrl+V 粘贴。手机上点终端唤起软键盘，单指滑动滚动历史（全屏程序中发送方向键），底部按键条提供 Esc / Tab / Ctrl（一次性粘滞）/ 方向键。
 - 同一会话可在多个浏览器同时打开，hub 只向 daemon 发一次接管（新加入的浏览器会再发一次 `attach` 取得新快照），最后一个浏览器关闭时 hub 发 `detach`，daemon 停止推送。
 - 结束原因显示在终端上方：已被本地收回 / 本机未允许接管 / 会话已退出 / 机器离线 / 连接已断开，终端转为只读。结束后不会自动重新接管；被本地收回、机器离线或连接中断时可点「重新接管」。关闭终端页即断开接管。
 
@@ -47,9 +47,52 @@
   4. `pnpm install --frozen-lockfile`、`pnpm build`（经 shell 执行，Windows 下可找到 `pnpm.cmd`）；
   5. 成功：`state=done`，约 1 秒后调用 `onUpdated`（`main.ts` 中为正常关闭后 `exit(0)`），由进程管理器拉起新版本。
 - **失败回滚**：删除新增文件、恢复备份文件与 `dist/`，若已执行过 `pnpm install` 则按旧 lockfile 再装一次；`state=failed`，`error` 为原因，hub 继续以旧版本运行，可重试。新版本中已删除的旧文件不会被清理（不影响运行）。
+- **安装版**（安装目录有 `install.json`，内容 `{"platform":"win-x64"}`，见下节）：检查时还要求 Release 资产中有 `tether-hub-<版本>-<平台>.zip`（Linux 以后为 `.tar.gz`）与 `SHA256SUMS`，缺少时 `state` 仍为 `available` 但不可 apply，`error` 提示到发布页下载安装包。apply 步骤：
+  1. 清空并创建安装目录内的 `.update/`（与安装目录同盘，后续才能改名）；下载更新包与 `SHA256SUMS`，SHA256 不符即失败；
+  2. 解压（zip 用 `%SystemRoot%\System32\tar.exe`），要求恰好一个顶层目录且其中 `install.json` 的平台与本机一致；
+  3. 对包内每个顶层项（`node.exe`、`dist`、`public`、`node_modules`、`package.json` 等）：先把安装目录中的同名项改名移入 `.update/old/`，再把新项改名移入安装目录。运行中的 `node.exe` 不能覆盖或删除，但可以改名；包外的文件（WinSW 及其 XML、卸载程序）不动；
+  4. 用新的 `node.exe --check dist/main.js` 检查能否运行；
+  5. 失败时按相反顺序换回并删除 `.update/`；成功时旧文件留在 `.update/old/`，下次启动由 `Updater` 删除。
+  - 成功后 `main.ts` 以退出码 1 退出：WinSW 2.x 在子进程以 0 退出时向 SCM 报告正常停止，不会重启；非 0 退出则触发服务的失败重启（5 秒后）。
 - **日志**：`log` 保留每步标题与命令输出末尾 20 行（总计最多 300 行），供网页显示。
 - **审计**：`update_start` / `update_done` / `update_failed` 写入 `audit.jsonl`，字段 `{time, event, from, to, reason?}`。
 - **网页**：顶栏按钮显示当前版本，有新版本时变为「有新版本 vX」胶囊（手机上为带红点的图标）；面板显示版本、更新说明（转义后按纯文本显示，保留换行）、发布页链接、检查 / 更新按钮、日志与失败原因。更新完成后面板显示「正在重启…」并每 1.5 s 探测 `/api/me`：旧进程断开后再次连通，或返回 401（新进程中登录会话已失效）即刷新页面；90 s 未恢复则提示可能未配置进程管理器。
+
+## 安装包（Windows）
+
+打包脚本 `scripts/package.ts`（`pnpm build && pnpm package [平台]`，默认 `win-x64`）按平台参数表组装，产物在 `build/out/`：
+
+1. 复制 `dist`、`public`、`package.json`、`LICENSE`，在暂存目录中 `pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted` 得到不含符号链接的生产依赖；写入 `install.json` 与 `tether-hub-token.cmd`；
+2. 下载固定版本的官方 Node（`NODE_VERSION`，压缩包 SHA256 写死在脚本中，取自 nodejs.org 的 `SHASUMS256.txt`），只取 `node.exe`；
+3. 打成更新包 `tether-hub-<版本>-win-x64.zip`（Windows 自带 bsdtar），顶层目录 `tether-hub-<版本>-win-x64/`；
+4. 找到 ISCC（环境变量 `ISCC`、`Program Files (x86)\Inno Setup 6`、`%LOCALAPPDATA%\Programs\Inno Setup 6` 或 PATH）时，下载固定版本并校验 SHA256 的 WinSW 2.12.0（`WinSW-x64.exe`，MIT）与 Inno Setup 简体中文语言文件，用 `packaging/windows/tether-hub.iss` 编译 `tether-hub-<版本>-win-x64-setup.exe`；
+5. 为 `build/out/` 下的文件生成 `SHA256SUMS`。下载缓存在 `build/cache/`。
+
+安装程序（Inno Setup 6.5+，需管理员）：
+
+- 程序装到 `{app}`（默认 `C:\Program Files\tether-hub`）：更新包内容 + `tether-hub-service.exe`（WinSW）+ 安装时生成的 `tether-hub-service.xml`（不含密码）。
+- `%ProgramData%\tether-hub` 去掉继承权限，只授予 SYSTEM 与 Administrators 完全控制；其中 `config.env` 为服务的环境变量（`HUB_ADMIN_PASSWORD`、`HUB_PORT`、`HUB_DATA_DIR`、`HUB_TLS_CERT` / `HUB_TLS_KEY` 或 `HUB_INSECURE=1`），值按 Node `--env-file` 规则加单引号（含单引号时依次改用反引号、双引号；三种都含的密码会被拒绝）。
+- 服务 `tether-hub`（LocalSystem）：`node.exe --env-file=<config.env> dist\main.js`，工作目录为 `%ProgramData%\tether-hub`，开机自动启动，异常退出 5 秒后重启（1 小时重置失败计数），停止时最多等 15 秒，日志在 `logs\`（按 10 MB 滚动，保留 8 个）。
+- 防火墙：入站规则「Tether Hub」放行 TCP 端口；升级时按 `config.env` 中的端口重建。
+- 升级（`config.env` 已存在）：跳过配置页；安装前 `stopwait` 停止服务，删除旧的 `dist`、`public`、`node_modules`、`.update` 后复制新文件，重写服务 XML，再启动服务。
+- 卸载：停止并删除服务、删除防火墙规则与程序目录；交互卸载时询问是否删除 `%ProgramData%\tether-hub`（默认否），静默卸载保留。
+- 开始菜单：「打开管理网页」（`http(s)://localhost:<端口>/`）、「Token 命令行」（`tether-hub-token.cmd`：以 `--env-file` 读取 `config.env` 中的 `HUB_DATA_DIR` 后运行 `dist\token-cli.js`；不是管理员时，无参数打开会请求以管理员身份另开窗口）。
+
+发布（`.github/workflows/release.yml`，推送 `v*` tag 触发）：
+
+- `windows` job（`windows-2025`）：校验 tag 与 `package.json` 版本一致 → `pnpm install --frozen-lockfile`、`build`、`test` → 安装固定版本的 Inno Setup（校验 SHA256）→ `pnpm package win-x64` → 冒烟测试：静默安装（明文、端口 8443）、等待服务启动、curl 首页与登录、token 命令行；不带参数再装一次验证升级保留配置；静默卸载并确认服务与防火墙规则已删除、配置保留 → 上传 zip 与 setup.exe 为 artifact。
+- `release` job：汇总各平台 artifact，生成 `SHA256SUMS`；Release 已存在则上传 / 覆盖资产，不存在则以 `CHANGELOG.md` 中该版本段为说明创建。
+- 以后加 linux-x64：在 `scripts/package.ts` 的平台表中加一项（Node 的 `linux-x64.tar.xz`、systemd 单元等），新增一个构建 job 调用 `pnpm package linux-x64` 并加入 `release` 的 `needs`；`Updater` 对非 `win-` 平台已按 `.tar.gz` 处理。
+
+## 机器 token 管理
+
+网页顶栏「Token」面板，复用 `store.ts` 的 `createToken` / `revokeToken` / `readData`，与命令行读写同一个 `hub.json`。网页吊销后由 `server.ts` 对 `hub.json` 的轮询（同进程写入同样触发）约 1 秒内断开使用该 token 的机器。
+
+- **接口**（均需登录；POST 另要求 `Origin` 与 `Host` 同源，否则 403）：
+  - `GET /api/tokens` → `[{name, revoked, createdAt, machines}]`，`machines` 为使用该 token 的机器名，不返回 SHA-256。
+  - `POST /api/tokens`，body `{"name":"..."}` → 201 `{name, token}`（明文只此一次）；名称非法或重复（含已吊销的）400。
+  - `POST /api/tokens/<URL 编码的名称>/revoke` → 200；不存在 404，已吊销 409。
+- **审计**：`token_create` / `token_revoke` 写入 `audit.jsonl`，字段 `{time, event, tokenName, ip}`；命令行操作不记录。
 
 ## 接管审计
 
@@ -59,7 +102,7 @@ hub 按协议第 7 节把接管事件追加到 `HUB_DATA_DIR/audit.jsonl`：`sta
 
 `data/hub.json` 保存 token（名称、SHA-256、创建时间、是否已吊销）与机器档案（machineId、名称、版本、token 名、最后在线时间）。hub 与 CLI 读改写时用 `hub.json.lock` 互斥，并先写临时文件再 rename，保证文件始终完整。会话列表只在内存中，hub 重启后由客户端重连时重新上报。
 
-`data/audit.jsonl` 为审计日志，每行一个 JSON（接管事件：时间、事件、机器、会话、来源 IP；更新事件：时间、事件、原版本、目标版本、失败原因），只追加不清理，需要时自行归档。
+`data/audit.jsonl` 为审计日志，每行一个 JSON（接管事件：时间、事件、机器、会话、来源 IP；更新事件：时间、事件、原版本、目标版本、失败原因；token 事件：时间、事件、token 名称、来源 IP），只追加不清理，需要时自行归档。
 
 ## 安全要点
 

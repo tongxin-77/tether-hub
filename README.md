@@ -9,7 +9,30 @@
 
 需配合 Tether 0.4.0 及以上（协议 v2）。文档：[需求](docs/requirements.md) · [协议](docs/protocol.md) · [实现细节](docs/internals.md) · [更新日志](CHANGELOG.md)
 
-## 快速开始
+## 安装包（Windows）
+
+从 [Releases](https://github.com/tongxin-77/tether-hub/releases) 下载 `tether-hub-<版本>-win-x64-setup.exe`，以管理员身份运行（Windows 10 / Server 2016 及以上 x64，自带 Node 运行时，无需另装 Node 或 pnpm）：
+
+1. 设置管理员密码与端口（默认 8443）；
+2. 选择 TLS 证书与私钥（PEM，见 [自签证书](#自签证书)），或明确选择「明文 HTTP（`HUB_INSECURE=1`）」——仅限本机或可信局域网；
+3. 完成后 hub 作为 Windows 服务 `tether-hub` 运行：开机自启、异常退出 5 秒后自动重启，并已为端口添加防火墙入站规则。
+
+开始菜单「Tether Hub」中有「打开管理网页」与「Token 命令行」（需管理员权限，未以管理员打开时会请求提升）：`tether-hub-token create <名称>` / `list` / `revoke <名称>`。
+
+| 位置 | 内容 |
+|------|------|
+| `C:\Program Files\tether-hub\` | 程序（node.exe、dist、public、node_modules）与服务包装器 |
+| `%ProgramData%\tether-hub\config.env` | 服务的环境变量（见 [环境变量](#环境变量)，含管理员密码）；修改后重启服务生效 |
+| `%ProgramData%\tether-hub\data\` | 数据目录（`HUB_DATA_DIR`） |
+| `%ProgramData%\tether-hub\logs\` | 服务日志 |
+
+`%ProgramData%\tether-hub` 只允许 SYSTEM 与 Administrators 访问。重启服务：管理员命令行 `sc stop tether-hub && sc start tether-hub`，或在「服务」中操作。
+
+- **升级**：网页一键更新（见 [更新](#更新)），或直接运行新版本安装程序——保留已有配置与数据，不再询问。
+- **卸载**：「设置 → 应用」或开始菜单中卸载，删除服务与防火墙规则；会询问是否删除 `%ProgramData%\tether-hub`（默认保留）。
+- **静默安装**：`tether-hub-<版本>-win-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /PASSWORD=<密码> [/PORT=8443] (/CERT=<证书路径> /KEY=<私钥路径> | /INSECURE=1)`；升级时不需要参数。静默卸载（`unins000.exe /VERYSILENT`）保留数据。
+
+## 源码部署
 
 需要 Node.js 22+（推荐 24 LTS）与 pnpm。
 
@@ -40,7 +63,7 @@ HUB_TLS_CERT=certs/cert.pem HUB_TLS_KEY=certs/key.pem HUB_ADMIN_PASSWORD='强密
 
 ## token 管理
 
-每台机器一个 token，hub 只保存其 SHA-256。
+每台机器一个 token，hub 只保存其 SHA-256。可在网页顶栏「Token」中签发（明文只显示一次）、查看与吊销，也可用命令行：
 
 ```sh
 pnpm run token create <名称>    # 签发
@@ -71,7 +94,7 @@ Tether **设置 → 管理服务器**：
 - **远程接管**：点「接管」打开终端，可输入、粘贴、调整尺寸；本地可随时「收回」；多个浏览器可同时查看。
 - **审计日志**：接管的开始 / 结束 / 被拒 / 收回 / 断线及 hub 更新等事件，可筛选。
 - **检查更新**：顶栏显示当前版本，有新版本时提示，可在网页一键更新（见 [更新](#更新)）。
-- **主题与手机**：浅 / 深色跟随系统；手机上为两级页面，接管终端全屏并带 Esc / Tab / Ctrl+C / 方向键按键条。
+- **主题与手机**：浅 / 深色跟随系统；手机上为两级页面，接管终端全屏，单指滑动滚动历史，并带 Esc / Tab / Ctrl / 方向键按键条。
 
 细节见 [实现细节](docs/internals.md)。
 
@@ -79,7 +102,9 @@ Tether **设置 → 管理服务器**：
 
 hub 启动时及每 6 小时检查一次 [GitHub Releases](https://github.com/tongxin-77/tether-hub/releases)，有新版本时网页顶栏出现「有新版本」提示，点开可查看更新说明、手动检查或「立即更新」。
 
-一键更新会下载新版本源码覆盖安装目录（保留 `data/`、`HUB_DATA_DIR`、`node_modules/`、`certs/`、`.env*`、`.git/`），执行 `pnpm install --frozen-lockfile` 与 `pnpm build`，成功后 hub 以退出码 0 退出，**需由 systemd（`Restart=always`）/ pm2 / NSSM 等进程管理器拉起新版本**；任一步失败会回滚并继续运行旧版本。需要系统有 `tar`（Windows 10+ 自带）与 pnpm；更新后需重新登录网页。
+**安装版**下载 Release 中本平台的更新包（`tether-hub-<版本>-win-x64.zip`），按 `SHA256SUMS` 校验后整体替换程序文件（配置、数据与服务设置不变），成功后由服务自动重启；失败会换回旧文件并继续运行旧版本。
+
+**源码部署**的一键更新会下载新版本源码覆盖安装目录（保留 `data/`、`HUB_DATA_DIR`、`node_modules/`、`certs/`、`.env*`、`.git/`），执行 `pnpm install --frozen-lockfile` 与 `pnpm build`，成功后 hub 以退出码 0 退出，**需由 systemd（`Restart=always`）/ pm2 / NSSM 等进程管理器拉起新版本**；任一步失败会回滚并继续运行旧版本。需要系统有 `tar`（Windows 10+ 自带）与 pnpm；更新后需重新登录网页。
 
 也可手动更新：`git pull && pnpm install && pnpm build` 后重启。
 
