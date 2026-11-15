@@ -1,4 +1,5 @@
 // Tether Hub Web 界面：登录、SSE 实时接收机器 / 会话状态并按主从布局渲染；远程接管终端（xterm.js）；审计日志。
+// 版本与更新：顶栏版本按钮 / 新版本胶囊 + 更新面板（检查、一键更新、进度日志、重启后自动刷新）。
 // 页面：#main 机器与会话（手机上为机器列表）、#detail 机器详情（仅手机两级页面用）、#term 接管终端、#audit 审计日志。
 'use strict';
 
@@ -16,6 +17,7 @@ const IC = {
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
   reset: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  up: '<circle cx="12" cy="12" r="9"/><path d="m8 12 4-4 4 4"/><path d="M12 16V8"/>',
 };
 const ic = (n, c = '') => `<svg class="ic ${c}" viewBox="0 0 24 24" aria-hidden="true">${IC[n]}</svg>`;
 document.querySelectorAll('[data-i]').forEach((e) => (e.outerHTML = ic(e.dataset.i)));
@@ -25,6 +27,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 
 /** 审计事件：标签文字、样式、无 reason 时的说明 */
 const EV = {
+  update_start: ['开始更新', 't-pri', 'hub 开始一键更新'],
+  update_done: ['更新完成', 't-pri', 'hub 更新完成并重启'],
+  update_failed: ['更新失败', 't-err', 'hub 更新失败，已回滚'],
   start: ['开始接管', 't-pri', '网页端开始接管'],
   end: ['结束接管', '', '最后一个网页端关闭终端'],
   denied: ['拒绝接管', 't-err', '接管被拒绝'],
@@ -104,6 +109,7 @@ function showLogin(msg) {
   stopEvents();
   closeTerm();
   showView('login');
+  $('upd').hidden = true;
   $('login-error').textContent = msg || '';
   $('password').focus();
 }
@@ -135,6 +141,10 @@ function startEvents() {
     state = JSON.parse(e.data);
     setSse('ok');
     render();
+  });
+  es.addEventListener('update', (e) => {
+    upd = JSON.parse(e.data);
+    renderUpdate();
   });
   es.onerror = async () => {
     if (es.readyState !== EventSource.CLOSED) return setSse('retry');
@@ -473,6 +483,8 @@ $('t-banner').addEventListener('click', (e) => e.target.closest('[data-retake]')
 // ---- 审计日志 ----
 
 const PAGE = 20;
+/** 更新事件没有机器字段，归为 hub */
+const aMachine = (a) => a.machineName || a.machineId || 'hub';
 let auditRows = [];
 let auditPage = 0;
 
@@ -487,7 +499,7 @@ async function loadAudit() {
   }
   const sel = $('f-m');
   const cur = sel.value;
-  const names = [...new Set(auditRows.map((a) => a.machineName || a.machineId))].sort();
+  const names = [...new Set(auditRows.map(aMachine))].sort();
   sel.innerHTML = '<option value="">全部机器</option>' + names.map((n) => `<option>${esc(n)}</option>`).join('');
   sel.value = names.includes(cur) ? cur : '';
   $('a-count').textContent = `最近 ${auditRows.length} 条`;
@@ -498,20 +510,22 @@ function renderAudit() {
   const ev = $('f-ev').value;
   const mm = $('f-m').value;
   const kw = $('f-kw').value.trim().toLowerCase();
-  const rows = auditRows.filter((a) => (!ev || a.event === ev) && (!mm || (a.machineName || a.machineId) === mm)
+  const rows = auditRows.filter((a) => (!ev || a.event === ev) && (!mm || aMachine(a) === mm)
     && (!kw || `${a.sessionName} #${a.sessionId} ${a.ip || ''}`.toLowerCase().includes(kw)));
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   auditPage = Math.min(auditPage, pages - 1);
   const shown = rows.slice(auditPage * PAGE, (auditPage + 1) * PAGE);
   const tag = (e) => `<span class="tag ${EV[e] ? EV[e][1] : ''}"><span class="ev">${esc(e)}</span>${EV[e] ? EV[e][0] : ''}</span>`;
-  const desc = (a) => esc(a.reason ? REASON[a.reason] || a.reason : EV[a.event] ? EV[a.event][2] : '');
+  const desc = (a) => esc(a.to ? `${a.from} → ${a.to}${a.reason ? `：${a.reason}` : ''}`
+    : a.reason ? REASON[a.reason] || a.reason : EV[a.event] ? EV[a.event][2] : '');
+  const sess = (a) => (a.sessionId === undefined ? '<span class="muted">—</span>' : `${esc(a.sessionName || '会话')} <span class="muted">#${a.sessionId}</span>`);
   const time = (a) => fullTime(Date.parse(a.time));
   $('a-body').innerHTML = shown.map((a) => `<tr><td class="tm">${esc(time(a))}</td><td>${tag(a.event)}</td>
-    <td>${esc(a.machineName || a.machineId)}</td><td>${esc(a.sessionName || '会话')} <span class="muted">#${a.sessionId}</span></td>
+    <td>${esc(aMachine(a))}</td><td>${sess(a)}</td>
     <td class="mono scmd">${esc(a.ip || '—')}</td><td class="muted">${desc(a)}</td></tr>`).join('')
     || `<tr><td colspan="6" class="empty">${auditRows.length ? '没有符合条件的记录' : '暂无接管记录'}</td></tr>`;
   $('a-list').innerHTML = shown.map((a) => `<div class="arow"><div class="a1">${tag(a.event)}<span class="tm">${esc(time(a))}</span></div>
-    <div class="a2">${esc(a.machineName || a.machineId)} · ${esc(a.sessionName || '会话')} #${a.sessionId}<span class="mono">${esc(a.ip || '')}</span></div>
+    <div class="a2">${esc(aMachine(a))}${a.sessionId === undefined ? '' : ` · ${esc(a.sessionName || '会话')} #${a.sessionId}`}<span class="mono">${esc(a.ip || '')}</span></div>
     <div class="a3">${desc(a)}</div></div>`).join('')
     || `<div class="empty">${auditRows.length ? '没有符合条件的记录' : '暂无接管记录'}</div>`;
   $('a-total').textContent = `共 ${rows.length} 条`;
@@ -541,6 +555,120 @@ $('a-pages').addEventListener('click', (e) => {
   auditPage = Number(b.dataset.page);
   renderAudit();
 });
+
+// ---- 版本与更新：状态由 SSE update 事件推送 ----
+
+let upd = null;
+/** 更新完成、等待 hub 重启的开始时间 */
+let restartAt = 0;
+const RESTART_HINT_MS = 90_000;
+
+function verNewer(a, b) {
+  const p = (v) => (/^v?(\d+)\.(\d+)\.(\d+)$/.exec(v || '') || []).slice(1).map(Number);
+  const x = p(a);
+  const y = p(b);
+  if (x.length < 3 || y.length < 3) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+}
+
+function renderUpdate() {
+  if (!upd) return;
+  const newer = verNewer(upd.latest, upd.current);
+  const st = upd.state;
+  const b = $('upd-btn');
+  b.hidden = false;
+  b.classList.toggle('new', newer || st === 'updating' || st === 'done');
+  const lbl = st === 'updating' ? '正在更新…' : st === 'done' ? '正在重启…' : newer ? `有新版本 ${upd.latest}` : `v${upd.current}`;
+  b.innerHTML = `${ic('up')}<span class="lbl">${esc(lbl)}</span>`;
+  b.title = newer ? `有新版本 ${upd.latest}，点击查看` : `当前版本 v${upd.current}，点击检查更新`;
+  if (st === 'done') {
+    $('upd').hidden = false;
+    watchRestart();
+  }
+  if ($('upd').hidden) return;
+
+  const busy = st === 'checking' || st === 'updating';
+  const tag = {
+    checking: '<span class="tag"><i class="dot info"></i>正在检查…</span>',
+    updating: '<span class="tag t-pri"><i class="dot info"></i>正在更新…</span>',
+    done: '<span class="tag t-pri"><i class="dot ok"></i>更新完成</span>',
+    failed: '<span class="tag t-err">更新失败</span>',
+  }[st] || (newer ? '<span class="tag t-pri"><i class="dot ok"></i>有新版本</span>' : upd.latest ? '<span class="tag">已是最新版本</span>' : '');
+  const url = /^https?:\/\//.test(upd.url || '') ? upd.url : '';
+  const late = restartAt && Date.now() - restartAt > RESTART_HINT_MS;
+  const checked = upd.checkedAt ? Date.parse(upd.checkedAt) : 0;
+  $('upd-body').innerHTML = `
+    <div class="desc">
+      <div class="di"><div class="dl">当前版本</div><div class="dv">v${esc(upd.current)}</div></div>
+      <div class="di"><div class="dl">最新版本</div><div class="dv">${upd.latest ? esc(upd.latest) : '—'}</div></div>
+      <div class="di"><div class="dl">上次检查</div><div class="dv" title="${esc(fullTime(checked))}">${ago(checked)}</div></div>
+    </div>
+    <div class="upd-st">${tag}${url && upd.latest ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">发布页${ic('chevR', 'ic-sm')}</a>` : ''}</div>
+    ${upd.error ? `<div class="banner">${ic('alertC')}<div><span class="bd">${esc(upd.error)}</span></div></div>` : ''}
+    ${st === 'done' ? `<div class="banner def">${ic('info')}<div><span class="bt">${late ? 'hub 长时间未恢复' : '更新完成，正在重启…'}</span>
+      <span class="bd">${late ? 'hub 可能未配置进程管理器（systemd / pm2 / NSSM），请到服务器上手动启动。' : 'hub 恢复后页面将自动刷新，需重新登录。'}</span></div></div>` : ''}
+    ${newer && upd.notes ? `<div class="upd-sec">更新说明</div><div class="upd-notes">${esc(upd.notes)}</div>` : ''}
+    ${upd.log ? `<div class="upd-sec">更新日志</div><pre class="upd-log" id="upd-log">${esc(upd.log)}</pre>` : ''}
+    ${st === 'done' ? '' : `<div class="upd-acts">
+      <button class="btn" data-upd="check"${busy ? ' disabled' : ''}>${ic('reset')}检查更新</button>
+      ${newer ? `<button class="btn btn-primary" data-upd="apply"${busy ? ' disabled' : ''}>${st === 'failed' ? '重试更新' : '立即更新'}</button>` : ''}
+    </div>`}`;
+  const log = $('upd-log');
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+/** 等待 hub 重启：旧进程退出后再次连通（或新进程因登录会话失效返回 401）即刷新页面 */
+function watchRestart() {
+  if (restartAt) return;
+  restartAt = Date.now();
+  let down = false;
+  const tick = async () => {
+    try {
+      const r = await fetch('/api/me', { cache: 'no-store' });
+      if (down || r.status === 401) return location.reload();
+    } catch {
+      down = true;
+    }
+    if (Date.now() - restartAt > RESTART_HINT_MS) renderUpdate();
+    setTimeout(tick, 1500);
+  };
+  setTimeout(tick, 1500);
+}
+
+async function updAction(kind) {
+  if (kind === 'apply') {
+    let n = upd.takeovers || 0;
+    try {
+      n = (await (await fetch('/api/update')).json()).takeovers || 0;
+    } catch {}
+    const msg = n ? `当前有 ${n} 个会话正在被远程接管，更新完成后 hub 会重启，接管将中断。\n\n确定更新到 ${upd.latest}？`
+      : `将更新到 ${upd.latest}，完成后 hub 会自动重启。确定继续？`;
+    if (!confirm(msg)) return;
+  }
+  try {
+    const r = await fetch(`/api/update/${kind}`, { method: 'POST' });
+    if (r.status === 401) return showLogin('登录已失效，请重新登录');
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) alert(body.error || `操作失败（${r.status}）`);
+  } catch {
+    alert('无法连接服务器');
+  }
+}
+
+/** 等待重启期间面板保持打开 */
+const closeUpd = () => upd && upd.state !== 'done' && ($('upd').hidden = true);
+$('upd-btn').addEventListener('click', () => {
+  $('upd').hidden = false;
+  renderUpdate();
+});
+$('upd-close').addEventListener('click', closeUpd);
+$('upd').addEventListener('click', (e) => {
+  if (e.target === $('upd')) return closeUpd();
+  const b = e.target.closest('[data-upd]');
+  if (b && !b.disabled) updAction(b.dataset.upd);
+});
+document.addEventListener('keydown', (e) => e.key === 'Escape' && !$('upd').hidden && closeUpd());
 
 // ---- 事件绑定 ----
 

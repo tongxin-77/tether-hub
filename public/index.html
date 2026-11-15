@@ -36,6 +36,7 @@
       <div class="brand"><span class="brand-mark">T</span><span class="txt">Tether Hub</span></div>
       <nav class="nav"><a href="#main" id="nav-main">机器与会话</a><a href="#audit" id="nav-audit">审计日志</a></nav>
       <div class="top-right">
+        <button class="btn btn-ghost btn-sm upd-btn" id="upd-btn" title="版本与更新" aria-label="版本与更新" hidden></button>
         <span class="sse" id="sse"></span>
         <button class="btn btn-ghost btn-sm btn-icon" id="theme-btn" title="切换浅色 / 深色" aria-label="切换浅色 / 深色"></button>
         <button class="btn btn-ghost btn-sm" id="logout" title="退出登录"><i data-i="logout"></i><span class="only-d">退出</span></button>
@@ -89,6 +90,14 @@
       <button data-key="esc">Esc</button><button data-key="tab">Tab</button><button class="w" data-key="ctrlc">Ctrl+C</button><button data-key="up" aria-label="上">↑</button><button data-key="down" aria-label="下">↓</button><button data-key="left" aria-label="左">←</button><button data-key="right" aria-label="右">→</button>
     </div>
   </section>
+
+  <!-- 版本与更新 -->
+  <div class="modal" id="upd" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="upd-title">
+      <div class="card-head"><h3 id="upd-title">版本与更新</h3><button class="btn btn-ghost btn-icon modal-x" id="upd-close" aria-label="关闭"><i data-i="x"></i></button></div>
+      <div class="card-body" id="upd-body"></div>
+    </div>
+  </div>
 </div>
 </body>
 </html>

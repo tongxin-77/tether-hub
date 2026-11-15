@@ -38,11 +38,21 @@ if (!tls) {
   console.warn('');
 }
 
-const hub = await startHub({ port, host, tls, adminPassword, dataDir }).catch((e: Error) => die(e.message));
+let closing = false;
+const hub = await startHub({
+  port, host, tls, adminPassword, dataDir,
+  updateCheck: env.HUB_UPDATE_CHECK !== '0',
+  updateApi: env.HUB_UPDATE_API || undefined,
+  // 一键更新成功：正常关闭后以退出码 0 退出，由进程管理器拉起新版本
+  onUpdated: async () => {
+    closing = true;
+    await hub.close();
+    process.exit(0);
+  },
+}).catch((e: Error) => die(e.message));
 const scheme = tls ? 'https' : 'http';
 console.log(`tether-hub ${HUB_VERSION} 已启动：${scheme}://${host}:${hub.port}/（daemon 连接 ${tls ? 'wss' : 'ws'}://<地址>:${hub.port}/agent），数据目录 ${dataDir}`);
 
-let closing = false;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, async () => {
     if (closing) return;

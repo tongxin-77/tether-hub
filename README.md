@@ -35,6 +35,8 @@ HUB_TLS_CERT=certs/cert.pem HUB_TLS_KEY=certs/key.pem HUB_ADMIN_PASSWORD='强密
 | `HUB_TLS_CERT` / `HUB_TLS_KEY` | — | PEM 证书与私钥，须同时设置 |
 | `HUB_INSECURE` | — | `1` = 无证书时以明文监听，仅限本机 / 可信局域网 |
 | `HUB_DATA_DIR` | `./data` | 数据目录（`hub.json`、`audit.jsonl`），token 命令须使用同一目录 |
+| `HUB_UPDATE_CHECK` | `1` | `0` = 关闭自动检查更新（网页仍可手动检查） |
+| `HUB_UPDATE_API` | GitHub Releases | 覆盖检查更新所用的 API 地址（测试用） |
 
 ## token 管理
 
@@ -67,10 +69,19 @@ Tether **设置 → 管理服务器**：
 
 - **机器与会话**：左侧机器列表（在线状态、等待确认数），右侧会话表；「Claude 等待确认」顶部醒目提醒；实时更新。
 - **远程接管**：点「接管」打开终端，可输入、粘贴、调整尺寸；本地可随时「收回」；多个浏览器可同时查看。
-- **审计日志**：接管的开始 / 结束 / 被拒 / 收回 / 断线等事件，可筛选。
+- **审计日志**：接管的开始 / 结束 / 被拒 / 收回 / 断线及 hub 更新等事件，可筛选。
+- **检查更新**：顶栏显示当前版本，有新版本时提示，可在网页一键更新（见 [更新](#更新)）。
 - **主题与手机**：浅 / 深色跟随系统；手机上为两级页面，接管终端全屏并带 Esc / Tab / Ctrl+C / 方向键按键条。
 
 细节见 [实现细节](docs/internals.md)。
+
+## 更新
+
+hub 启动时及每 6 小时检查一次 [GitHub Releases](https://github.com/tongxin-77/tether-hub/releases)，有新版本时网页顶栏出现「有新版本」提示，点开可查看更新说明、手动检查或「立即更新」。
+
+一键更新会下载新版本源码覆盖安装目录（保留 `data/`、`HUB_DATA_DIR`、`node_modules/`、`certs/`、`.env*`、`.git/`），执行 `pnpm install --frozen-lockfile` 与 `pnpm build`，成功后 hub 以退出码 0 退出，**需由 systemd（`Restart=always`）/ pm2 / NSSM 等进程管理器拉起新版本**；任一步失败会回滚并继续运行旧版本。需要系统有 `tar`（Windows 10+ 自带）与 pnpm；更新后需重新登录网页。
+
+也可手动更新：`git pull && pnpm install && pnpm build` 后重启。
 
 ## 自签证书
 

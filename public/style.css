@@ -118,6 +118,24 @@ a{color:var(--primary);text-decoration:none}
 .top-right{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2)}
 .sse{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:999px;white-space:nowrap;font-size:12px;color:var(--text-3)}
 .sse .dot{width:7px;height:7px}
+.upd-btn{position:relative;font-size:12px;color:var(--text-3)}
+.upd-btn.new{background:var(--primary-soft);color:var(--pri-ink);border-radius:999px;font-weight:500}
+.upd-btn.new:hover{background:var(--primary-soft);color:var(--primary-hover)}
+
+/* 版本与更新面板 */
+.modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:16px;background:rgba(30,22,15,.32)}
+.modal-card{width:100%;max-width:580px;max-height:100%;display:flex;flex-direction:column;background:var(--surface);border-radius:16px;box-shadow:0 12px 40px rgba(30,22,15,.18);overflow:hidden}
+.modal-card .card-head{padding:16px 14px 6px 22px}
+.modal-x{margin-left:auto}
+.modal-card .card-body{overflow:auto}
+.upd-st{display:flex;align-items:center;gap:12px;margin:18px 0 12px;font-size:13px}
+.upd-st a{display:inline-flex;align-items:center;gap:2px;margin-left:auto}
+.upd-st:empty{display:none}
+.modal .banner{margin-bottom:12px}
+.upd-sec{margin:16px 0 8px;font-size:12px;color:var(--text-3)}
+.upd-notes{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--fill);border-radius:10px;padding:12px 14px;font-size:13px;max-height:240px;overflow:auto}
+.upd-log{margin:0;font:12px/1.55 var(--mono);background:var(--t-bg);color:var(--t-fg);border-radius:10px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.upd-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 
 /* 等待确认提醒 */
 .alert-confirm{flex:none;margin:0 20px 12px;border-radius:12px;background:var(--warning-soft);color:var(--warning-ink);font-size:13px}
@@ -227,6 +245,19 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
   .top-right{gap:0}
   .top-right .btn-ghost{height:44px;padding:0 10px}
   .top-right .btn-icon{width:44px;padding:0}
+  .upd-btn .lbl{display:none}
+  .top-right .upd-btn{width:44px;padding:0;border-radius:10px}
+  .upd-btn.new,.upd-btn.new:hover{background:transparent;color:var(--primary)}
+  .upd-btn.new::after{content:"";position:absolute;top:11px;right:10px;width:8px;height:8px;border-radius:50%;background:var(--warning);box-shadow:0 0 0 2px var(--bg)}
+
+  .modal{place-items:end stretch;padding:0}
+  .modal-card{max-width:none;max-height:92%;border-radius:16px 16px 0 0;padding-bottom:env(safe-area-inset-bottom)}
+  .modal-card .card-head{padding:10px 4px 2px 16px}
+  .modal-x{width:44px;height:44px}
+  .modal-card .card-body{padding:8px 16px 16px}
+  .modal .desc{grid-template-columns:repeat(3,1fr);gap:10px}
+  .upd-acts .btn{flex:1;height:44px}
+  .upd-st a{min-height:44px}
 
   .alert-confirm{margin:0 12px 10px}
   .ac-head{cursor:pointer;padding:0 12px 0 14px;min-height:46px}

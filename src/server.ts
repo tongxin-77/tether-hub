@@ -1,4 +1,4 @@
-// 组装 hub：HTTP(S) 服务器 + /agent WebSocket + Web 界面（含 /api/term），并监听 hub.json 变化以响应 token 吊销。
+// 组装 hub：HTTP(S) 服务器 + /agent WebSocket + Web 界面（含 /api/term）+ 检查更新，并监听 hub.json 变化以响应 token 吊销。
 
 import fs from 'node:fs';
 import http from 'node:http';
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Agents } from './agents.js';
 import { appendAudit } from './audit.js';
 import { dataFile, readData, updateData, type TokenRec } from './store.js';
+import { DEFAULT_UPDATE_API, Updater } from './update.js';
 import { Web } from './web.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,6 +26,12 @@ export interface HubOptions {
   /** 轮询 hub.json 的间隔 */
   watchIntervalMs?: number;
   log?: (msg: string) => void;
+  /** 启动时与每 6 小时自动检查更新（默认否） */
+  updateCheck?: boolean;
+  /** Releases API 地址（默认 GitHub） */
+  updateApi?: string;
+  /** 一键更新成功后调用（默认直接以退出码 0 退出） */
+  onUpdated?: () => void;
 }
 
 export interface Hub {
@@ -68,9 +75,21 @@ export async function startHub(opt: HubOptions): Promise<Hub> {
     },
     initial.machines,
   );
+  const updater = new Updater({
+    current: HUB_VERSION, installDir: root, dataDir: dir, api: opt.updateApi ?? DEFAULT_UPDATE_API, auto: !!opt.updateCheck, log,
+    audit: (rec) => {
+      try {
+        appendAudit(dir, rec);
+      } catch (e) {
+        log(`写入审计日志失败：${(e as Error).message}`);
+      }
+    },
+    restart: opt.onUpdated ?? (() => process.exit(0)),
+  });
   const web = new Web(
     { adminPassword: opt.adminPassword, secure: !!opt.tls, publicDir: path.join(root, 'public'), dataDir: dir, hubVersion: HUB_VERSION, log },
     agents,
+    updater,
   );
 
   // token CLI 改写 hub.json 后重新加载 token，并断开已吊销 token 的连接
@@ -105,6 +124,7 @@ export async function startHub(opt: HubOptions): Promise<Hub> {
     agents,
     async close() {
       fs.unwatchFile(file, onFile);
+      updater.close();
       web.close();
       agents.close();
       persist();

@@ -1,4 +1,4 @@
-// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话变化，/api/term 终端接管 WebSocket。
+// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话 / 更新状态变化，/api/term 终端接管 WebSocket。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -8,6 +8,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { MAX_MESSAGE, reject, type Agents, type Machine } from './agents.js';
 import { readAudit } from './audit.js';
+import type { Updater } from './update.js';
 
 const COOKIE = 'hub_session';
 const SESSION_TTL = 7 * 24 * 3600_000;
@@ -58,8 +59,9 @@ export class Web {
   private pushTimer?: NodeJS.Timeout;
   private beat: NodeJS.Timeout;
 
-  constructor(private opt: WebOptions, private agents: Agents) {
+  constructor(private opt: WebOptions, private agents: Agents, private updater: Updater) {
     this.pwHash = sha256(opt.adminPassword);
+    updater.on('change', () => this.send(this.updateEvent()));
     agents.on('change', () => {
       // 合并短时间内的多次变化
       this.pushTimer ??= setTimeout(() => {
@@ -98,6 +100,17 @@ export class Web {
         const n = Number(url.searchParams.get('limit') ?? 100);
         return json(res, 200, readAudit(this.opt.dataDir, Number.isInteger(n) && n > 0 ? Math.min(n, 1000) : 100));
       }
+      if (route === 'GET /api/update') return json(res, 200, this.updateStatus());
+      if (req.method === 'POST' && url.pathname.startsWith('/api/update/') && !sameOrigin(req)) return json(res, 403, { error: '来源不允许' });
+      if (route === 'POST /api/update/check') {
+        void this.updater.check();
+        return json(res, 202, this.updateStatus());
+      }
+      if (route === 'POST /api/update/apply') {
+        if (!this.updater.canApply) return json(res, 409, { error: '没有可安装的新版本，或更新正在进行' });
+        void this.updater.apply();
+        return json(res, 202, this.updateStatus());
+      }
       return json(res, 404, { error: '不存在' });
     } catch (e) {
       this.opt.log(`请求出错 ${route}：${(e as Error).message}`);
@@ -119,11 +132,7 @@ export class Web {
 
   /** /api/term?machine=…&session=…：须同源且已登录，否则不升级 */
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
-    let sameOrigin = false;
-    try {
-      sameOrigin = new URL(req.headers.origin ?? '').host === req.headers.host;
-    } catch {}
-    if (!sameOrigin) return reject(socket, 403, 'Forbidden');
+    if (!sameOrigin(req)) return reject(socket, 403, 'Forbidden');
     if (!this.authed(req)) return reject(socket, 401, 'Unauthorized');
     const url = new URL(req.url ?? '/', 'http://x');
     const machine = url.searchParams.get('machine') ?? '';
@@ -211,14 +220,26 @@ export class Web {
     });
     res.write('retry: 3000\n\n');
     res.write(`event: state\ndata: ${JSON.stringify(snapshot(this.agents, this.opt.hubVersion))}\n\n`);
+    res.write(this.updateEvent());
     this.clients.add(res);
     req.on('close', () => this.clients.delete(res));
   }
 
   private push() {
-    if (!this.clients.size) return;
-    const data = `event: state\ndata: ${JSON.stringify(snapshot(this.agents, this.opt.hubVersion))}\n\n`;
+    if (this.clients.size) this.send(`event: state\ndata: ${JSON.stringify(snapshot(this.agents, this.opt.hubVersion))}\n\n`);
+  }
+
+  private send(data: string) {
     for (const res of this.clients) res.write(data);
+  }
+
+  /** 更新状态，附进行中的接管数（前端据此二次确认） */
+  private updateStatus() {
+    return { ...this.updater.status(), takeovers: this.agents.takeoverCount() };
+  }
+
+  private updateEvent() {
+    return `event: update\ndata: ${JSON.stringify(this.updateStatus())}\n\n`;
   }
 
   close() {
@@ -228,6 +249,15 @@ export class Web {
     this.clients.clear();
     for (const ws of this.terms.keys()) ws.terminate();
     this.wss.close();
+  }
+}
+
+/** Origin 须与 Host 同源（终端 WebSocket 与更新类 POST 的 CSRF 防护） */
+function sameOrigin(req: IncomingMessage) {
+  try {
+    return new URL(req.headers.origin ?? '').host === req.headers.host;
+  } catch {
+    return false;
   }
 }
 

@@ -124,6 +124,13 @@ export class Agents extends EventEmitter {
     }));
   }
 
+  /** 进行中的接管数 */
+  takeoverCount() {
+    let n = 0;
+    for (const c of this.conns.values()) n += c.takeovers.size;
+    return n;
+  }
+
   /** HTTP upgrade：先校验 Bearer token，失败返回 401 且不升级 */
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
     const url = new URL(req.url ?? '/', 'http://x');
