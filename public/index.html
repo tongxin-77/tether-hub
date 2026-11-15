@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Tether Hub</title>
 <link rel="stylesheet" href="/xterm/xterm.css">
 <link rel="stylesheet" href="/style.css">
@@ -11,42 +11,84 @@
 <script src="/app.js" defer></script>
 </head>
 <body>
-<section id="login" class="login" hidden>
-  <form id="login-form" class="card login-card">
-    <div class="brand"><span class="logo">T</span>Tether Hub</div>
-    <label for="password">管理员密码</label>
-    <input id="password" type="password" autocomplete="current-password" required autofocus>
-    <button type="submit">登录</button>
-    <p id="login-error" class="error" role="alert"></p>
-  </form>
-</section>
+<div id="app">
 
-<section id="main" hidden>
-  <header class="top">
-    <div class="brand"><span class="logo">T</span>Tether Hub</div>
-    <div id="summary" class="summary"></div>
-    <span id="conn" class="conn" title="实时连接状态"></span>
-    <button id="logout" class="ghost">退出登录</button>
-  </header>
-  <main id="machines" class="machines"></main>
-  <section class="audit-wrap">
-    <div class="audit-head">
-      <h2>接管审计</h2>
-      <button id="audit-refresh" class="ghost">刷新</button>
+  <!-- 登录 -->
+  <section class="view" id="v-login">
+    <div class="login">
+      <form class="login-card" id="login-form">
+        <div class="brand"><span class="brand-mark">T</span><span>Tether Hub</span></div>
+        <h1>管理员登录</h1>
+        <p class="sub">汇总并远程接管各机器上的 Tether 终端会话</p>
+        <label class="field"><span>管理员密码</span>
+          <input class="input" type="password" id="password" placeholder="请输入密码" autocomplete="current-password" required>
+          <div class="err-tip" id="login-error" role="alert"></div>
+        </label>
+        <button class="btn btn-primary" type="submit">登录</button>
+        <div class="login-foot">单用户自托管服务。密码由 hub 的 HUB_ADMIN_PASSWORD 设置。</div>
+      </form>
     </div>
-    <div class="card audit"><table><tbody id="audit"></tbody></table></div>
   </section>
-</section>
 
-<section id="term" class="term-overlay" hidden>
-  <div class="card term-card">
-    <header class="term-head">
-      <span id="term-title" class="term-title"></span>
-      <span id="term-status" class="term-status"></span>
-      <button id="term-close" class="ghost">关闭</button>
+  <!-- 主框架：机器与会话 + 审计 -->
+  <section class="view" id="v-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">T</span><span class="txt">Tether Hub</span></div>
+      <nav class="nav"><a href="#main" id="nav-main">机器与会话</a><a href="#audit" id="nav-audit">审计日志</a></nav>
+      <div class="top-right">
+        <span class="sse" id="sse"></span>
+        <button class="btn btn-ghost btn-sm btn-icon" id="theme-btn" title="切换浅色 / 深色" aria-label="切换浅色 / 深色"></button>
+        <button class="btn btn-ghost btn-sm" id="logout" title="退出登录"><i data-i="logout"></i><span class="only-d">退出</span></button>
+      </div>
     </header>
-    <div id="term-box" class="term-box"></div>
-  </div>
-</section>
+    <div class="alert-confirm" id="alert" hidden></div>
+
+    <div class="page md" id="p-main">
+      <aside class="master">
+        <div class="master-head">
+          <div class="master-title"><b>机器</b><span id="m-stat"></span></div>
+          <div class="search"><i data-i="search"></i><input class="input" id="m-search" placeholder="搜索机器名称 / Token"></div>
+        </div>
+        <div class="mlist" id="m-list"></div>
+      </aside>
+      <main class="detail" id="detail"></main>
+    </div>
+
+    <div class="page audit" id="p-audit">
+      <div class="card">
+        <div class="card-head"><h3>审计日志</h3><div class="extra"><span id="a-count"></span><button class="btn btn-sm" id="a-refresh"><i data-i="reset"></i>刷新</button></div></div>
+        <div class="filters">
+          <label><span>事件</span><select class="select" id="f-ev"><option value="">全部事件</option></select></label>
+          <label><span>机器</span><select class="select" id="f-m"><option value="">全部机器</option></select></label>
+          <label class="kw"><span>关键字</span><div class="search"><i data-i="search"></i><input class="input" id="f-kw" placeholder="会话名称 / 来源 IP"></div></label>
+          <button class="btn reset" id="f-reset">重置</button>
+        </div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th class="w-time">时间</th><th class="w-ev">事件</th><th>机器</th><th>会话</th><th>来源 IP</th><th>说明</th></tr></thead><tbody id="a-body"></tbody></table></div>
+        <div class="alist" id="a-list"></div>
+        <div class="pager"><span id="a-total"></span><span id="a-pages"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 接管终端 -->
+  <section class="view term-view" id="v-term">
+    <header class="term-head">
+      <div class="term-title"><b id="t-name"></b><span id="t-sub"></span></div>
+      <div class="right">
+        <span id="t-tag"></span>
+        <button class="btn btn-sm only-d" id="t-close">关闭</button>
+        <button class="btn close only-m" id="t-close-m" aria-label="关闭"><i data-i="x"></i></button>
+      </div>
+    </header>
+    <div class="term-body">
+      <div id="t-banner"></div>
+      <div class="term" id="term-wrap"><div class="term-box" id="term-box"></div></div>
+      <div class="term-foot only-d" id="t-foot"></div>
+    </div>
+    <div class="keys" id="keys">
+      <button data-key="esc">Esc</button><button data-key="tab">Tab</button><button class="w" data-key="ctrlc">Ctrl+C</button><button data-key="up" aria-label="上">↑</button><button data-key="down" aria-label="下">↓</button><button data-key="left" aria-label="左">←</button><button data-key="right" aria-label="右">→</button>
+    </div>
+  </section>
+</div>
 </body>
 </html>
