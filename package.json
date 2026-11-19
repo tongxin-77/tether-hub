@@ -1,6 +1,6 @@
 {
   "name": "tether-hub",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Tether 自托管管理服务器",
   "license": "Apache-2.0",

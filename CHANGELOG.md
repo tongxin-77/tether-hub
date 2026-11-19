@@ -2,6 +2,13 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.1] - 2026-11-19
+
+### 🐛 修复
+
+- **手机端顶栏导航不再挤成两行**
+  - 手机上导航标签显示为「机器」「审计」，桌面端不变
+
 ## [0.5.0] - 2026-11-19
 
 ### ✨ 新增
@@ -69,6 +76,7 @@
 - 审计：接管的开始、结束、被拒、本地收回、断线等事件写入 `audit.jsonl`，网页可筛选查看。
 - Web 管理界面：管理员密码登录（限流），主从布局（机器列表 + 会话详情），「Claude 等待确认」醒目提醒，浅色 / 深色主题，适配手机（两级页面、全屏终端与按键条）。
 
+[0.5.1]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.5.1
 [0.5.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.3.0
