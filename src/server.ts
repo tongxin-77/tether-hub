@@ -29,6 +29,9 @@ export interface HubOptions {
   imageTimeoutMs?: number;
   /** 网页关闭会话等待 daemon 回复的超时（默认 10 s） */
   closeTimeoutMs?: number;
+  /** 网页新建会话：取选项 / 列 Claude 历史对话（默认 10 s）与新建（默认 30 s）等待 daemon 回复的超时 */
+  queryTimeoutMs?: number;
+  createTimeoutMs?: number;
   /** 轮询 hub.json 的间隔 */
   watchIntervalMs?: number;
   log?: (msg: string) => void;
@@ -70,6 +73,8 @@ export async function startHub(opt: HubOptions): Promise<Hub> {
       pingIntervalMs: opt.pingIntervalMs ?? 25_000,
       imageTimeoutMs: opt.imageTimeoutMs,
       closeTimeoutMs: opt.closeTimeoutMs,
+      queryTimeoutMs: opt.queryTimeoutMs,
+      createTimeoutMs: opt.createTimeoutMs,
       tokens: () => tokens,
       persist,
       audit: (rec) => {

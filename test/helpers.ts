@@ -16,12 +16,12 @@ export interface Ctx {
   close(): Promise<void>;
 }
 
-export async function setup(opts: { helloTimeoutMs?: number; updateApi?: string; imageTimeoutMs?: number; closeTimeoutMs?: number } = {}): Promise<Ctx> {
+export async function setup(opts: { helloTimeoutMs?: number; updateApi?: string; imageTimeoutMs?: number; closeTimeoutMs?: number; queryTimeoutMs?: number; createTimeoutMs?: number } = {}): Promise<Ctx> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tether-hub-test-'));
   const token = createToken(dir, 'pc1');
   const hub = await startHub({
     port: 0, host: '127.0.0.1', adminPassword: PASSWORD, dataDir: dir,
-    helloTimeoutMs: opts.helloTimeoutMs ?? 10_000, watchIntervalMs: 50, log: () => {}, updateApi: opts.updateApi, imageTimeoutMs: opts.imageTimeoutMs, closeTimeoutMs: opts.closeTimeoutMs,
+    helloTimeoutMs: opts.helloTimeoutMs ?? 10_000, watchIntervalMs: 50, log: () => {}, updateApi: opts.updateApi, imageTimeoutMs: opts.imageTimeoutMs, closeTimeoutMs: opts.closeTimeoutMs, queryTimeoutMs: opts.queryTimeoutMs, createTimeoutMs: opts.createTimeoutMs,
   });
   return {
     hub, dir, token,

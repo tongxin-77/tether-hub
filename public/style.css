@@ -146,6 +146,24 @@ a{color:var(--primary);text-decoration:none}
 .tok-copy .input{flex:1;min-width:0;height:28px;font-size:12px;background:var(--surface)}
 .tok-tip{font-size:12px;color:var(--text-3);margin-top:4px}
 .tok-tip:empty{display:none}
+/* 网页新建会话对话框 */
+.nc-sub{font-size:13px;color:var(--text-3)}
+.nc-seg{display:inline-flex;gap:4px;padding:3px;margin-top:12px;border-radius:10px;background:var(--fill)}
+.nc-seg label{display:inline-flex;align-items:center;height:28px;padding:0 18px;border-radius:8px;font-size:13px;cursor:pointer}
+.nc-seg input{position:absolute;opacity:0;pointer-events:none}
+.nc-seg label:has(input:checked){background:var(--surface);font-weight:600;box-shadow:0 1px 2px rgba(30,22,15,.12)}
+.nc-seg label:has(input:focus-visible){box-shadow:0 0 0 3px var(--ring)}
+.nc-dir{display:flex;gap:8px}
+.nc-dir .input{flex:1;min-width:0}
+.nc-dir .select{width:auto;max-width:40%}
+.nc-chk{display:inline-flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer}
+.nc-hist{display:flex;flex-direction:column;gap:2px;margin-top:8px;max-height:260px;overflow:auto}
+.nc-hist .empty{padding:16px}
+.nc-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:8px 12px;border:1px solid transparent;border-radius:10px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.nc-item:hover{background:var(--hover)}
+.nc-item.on{border-color:var(--primary);background:var(--ring)}
+.nc-t{max-width:100%;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nc-m{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)}
 .tok-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px}
 .tok-row:nth-child(even){background:var(--hover)}
 .tok-main{flex:1;min-width:0}
@@ -267,6 +285,16 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
 .paste-ta{height:auto;min-height:120px;padding:8px 12px;font:13px/1.5 var(--mono);resize:vertical}
 .term-foot{flex:none;display:flex;gap:16px;font-size:12px;color:var(--text-3);padding:0 4px}
 .term-foot .end{margin-left:auto}
+/* 文本视图（手机）：html.tv-on 时隐藏 #app，解除 html/body 的固定高度与 overflow，<pre> 在文档流中由文档本身滚动，系统长截图可截到全部内容 */
+.tv{display:none}
+html.tv-on,html.tv-on body{height:auto;overflow:visible}
+html.tv-on body{display:block;background:var(--t-bg)}
+html.tv-on #app{display:none}
+html.tv-on .tv{display:block}
+.tv-bar{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) 8px calc(14px + env(safe-area-inset-left));background:var(--surface);box-shadow:var(--shadow)}
+.tv-tip{flex:1;min-width:0;font-size:12px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv-bar .btn{height:36px}
+.tv-pre{margin:0;padding:12px calc(12px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));font:12px/1.5 var(--mono);color:var(--t-fg);background:var(--t-bg);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text}
 .keys{display:none}
 /* 手机或触屏设备（如平板）显示快捷键栏，位于终端下方、软键盘上方 */
 @media (max-width:768px),(pointer:coarse){
@@ -308,6 +336,12 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
   .upd-st a{min-height:44px}
   .tok-form .input,.tok-form .btn{height:44px}
   .tok-copy .input,.tok-copy .btn{height:40px}
+  .nc-seg label{height:38px}
+  .nc-dir{flex-direction:column}
+  .nc-dir .select{max-width:none;width:100%}
+  #nc .input,#nc .select{height:44px}
+  .nc-chk{min-height:44px;margin-top:6px}
+  .nc-item{padding:10px 8px}
   .tok-row{flex-wrap:wrap;padding:10px 8px}
   .tok-acts{width:100%;justify-content:flex-end}
   .tok-acts .btn{height:40px;min-width:64px}
@@ -386,6 +420,7 @@ tr.need .t-warn,.scard.need .t-warn{background:var(--surface)}
   .term-title span{font-size:11px}
   .term-head .close{width:44px;height:44px;padding:0;color:var(--text-2);background:transparent}
   .term-head .close .ic{width:20px;height:20px}
+  .term-head .tv-btn{display:inline-flex;height:36px}
   .term-body{padding:0;gap:0}
   .banner{border-radius:0;padding:10px 14px;flex-wrap:wrap}
   .banner .act{margin-left:26px;width:100%}

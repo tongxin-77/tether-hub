@@ -40,6 +40,16 @@
 
 机器详情中运行中的会话旁有「关闭」按钮，页内二次确认后调用 `POST /api/session/close?machine=<machineId>&session=<sessionId>`（需登录且同源）：成功 200 `{"ok":true}`，该会话随后从 Tether 上报的会话列表中消失；正在查看该会话终端的浏览器关闭终端页，回到机器页并提示「会话「名称」已关闭」；机器离线或 Tether 无 `close` 能力 409；daemon 回 `ok:false` 时 422 `{"error":"…","reason":"disabled|not_found"}`；10 s 未回复 504；等待中断线 409。无 `close` 能力或离线时按钮置灰并说明原因；hub 不知道本机是否允许接管，未允许时由 422 的原因提示。实现见 `Web.closeSession` 与 `Agents.closeSession`。
 
+### 网页新建会话
+
+机器详情会话卡片头的「新建会话」按钮（机器离线或 Tether 无 `create` 能力时置灰并说明原因）打开对话框：本地 / SSH、目录（可从最近目录选，留空 = 用户目录）、本地时可勾选「恢复 Claude 对话」按目录列出历史对话。接口（均需登录，POST 需同源）：
+
+- `GET /api/create-options?machine=<machineId>` → 200 `{"home":"…","recent":[…],"hosts":[…]}`。
+- `GET /api/claude-history?machine=<machineId>&cwd=<目录>` → 200 `{"items":[…]}`；`cwd` 必填（网页留空时传 `home`）。
+- `POST /api/session/create?machine=<machineId>`，JSON 请求体 `{"target":{…},"resume"?:{…},"cols"?:n,"rows"?:n}`（格式见协议第 8.5 节；只转发已知字段，`resume` 仅 `local`）→ 200 `{"sessionId":7}`。
+
+错误码与关闭会话一致：参数 / 请求体错误 400、非 JSON 415、机器离线或无 `create` 能力 409、daemon 回 `ok:false` 时 422 `{"error":"…","reason":"…"}`、超时 504（10 s / 10 s / 30 s）、等待中断线 409。新建成功后网页等该会话经 SSE 出现在列表中（最多 10 s）再直接打开终端接管。实现见 `Web.createSession` 等与 `Agents.createSession` / `createOptions` / `claudeHistory`。
+
 ### 贴图接口
 
 `POST /api/term/image?machine=<machineId>&session=<sessionId>`，请求体为原始图片，需登录且 `Origin` 与 `Host` 同源。实现见 `Web.image` 与 `Agents.uploadImage`。
@@ -123,7 +133,7 @@ hub 按 256 KB 分块发 `imageChunk`，每块等写入 socket，WebSocket 发�
 
 ## 接管审计
 
-hub 按协议第 7 节把接管事件追加到 `HUB_DATA_DIR/audit.jsonl`：`start`（开始）、`denied`（被拒，附 `reason`）、`end`（最后一个浏览器离开）、`reclaimed`（本地收回）、`disabled`（本地关闭允许接管）、`exited`（会话退出）、`disconnected`（机器断线），以及贴图 `image`（附 `bytes`、`mime`）/ `image_failed`（附 `reason`：daemon 回的原因，或 `timeout` 超时、`ended` 等待期间接管结束；接口直接返回 409 / 413 / 415 的不记），以及网页关闭会话 `close` / `close_failed`（附 `reason`：`disabled`、`not_found`，或 `timeout` 超时、`disconnected` 等待中断线）。不记图片路径、不存图片。网页「审计日志」页显示最近 500 条，可按事件、机器、关键字（会话名称 / 来源 IP）筛选；`GET /api/audit?limit=N`（需登录，默认 100，上限 1000）返回最近 N 条，新的在前。
+hub 按协议第 7 节把接管事件追加到 `HUB_DATA_DIR/audit.jsonl`：`start`（开始）、`denied`（被拒，附 `reason`）、`end`（最后一个浏览器离开）、`reclaimed`（本地收回）、`disabled`（本地关闭允许接管）、`exited`（会话退出）、`disconnected`（机器断线），以及贴图 `image`（附 `bytes`、`mime`）/ `image_failed`（附 `reason`：daemon 回的原因，或 `timeout` 超时、`ended` 等待期间接管结束；接口直接返回 409 / 413 / 415 的不记），以及网页关闭会话 `close` / `close_failed`（附 `reason`：`disabled`、`not_found`，或 `timeout` 超时、`disconnected` 等待中断线），以及网页新建会话 `create` / `create_failed`（附目标摘要 `target`；失败附 `reason`，无 `sessionId`）。不记图片路径、不存图片。网页「审计日志」页显示最近 500 条，可按事件、机器、关键字（会话名称 / 来源 IP）筛选；`GET /api/audit?limit=N`（需登录，默认 100，上限 1000）返回最近 N 条，新的在前。
 
 ## 数据
 

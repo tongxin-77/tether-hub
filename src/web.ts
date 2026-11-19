@@ -1,4 +1,4 @@
-// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话 / 更新状态变化，/api/term 终端接管 WebSocket 与贴图上传，网页关闭会话，机器 token 管理。
+// Web 界面与 Web API：管理员密码登录（内存会话 + HttpOnly cookie），SSE 推送机器 / 会话 / 更新状态变化，/api/term 终端接管 WebSocket 与贴图上传，网页关闭 / 新建会话，机器 token 管理。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { IMAGE_TYPES, MAX_IMAGE, MAX_MESSAGE, reject, type Agents, type Machine } from './agents.js';
+import { IMAGE_TYPES, MAX_IMAGE, MAX_MESSAGE, reject, type Agents, type CreateRequest, type Failure, type Machine } from './agents.js';
 import { appendAudit, readAudit, type TokenAuditRec } from './audit.js';
 import { createToken, readData, revokeToken } from './store.js';
 import type { Updater } from './update.js';
@@ -20,6 +20,8 @@ export const LOCK_MS = 5 * 60_000;
 const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/img.js': ['img.js', 'text/javascript; charset=utf-8'],
+  '/textview.js': ['textview.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/xterm/xterm.js': ['../node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript; charset=utf-8'],
   '/xterm/xterm.css': ['../node_modules/@xterm/xterm/css/xterm.css', 'text/css; charset=utf-8'],
@@ -102,11 +104,14 @@ export class Web {
         return json(res, 200, readAudit(this.opt.dataDir, Number.isInteger(n) && n > 0 ? Math.min(n, 1000) : 100));
       }
       if (route === 'GET /api/update') return json(res, 200, this.updateStatus());
-      if (req.method === 'POST' && (url.pathname.startsWith('/api/update/') || url.pathname.startsWith('/api/tokens') || url.pathname === '/api/term/image' || url.pathname === '/api/session/close') && !sameOrigin(req)) {
+      if (req.method === 'POST' && (url.pathname.startsWith('/api/update/') || url.pathname.startsWith('/api/tokens') || url.pathname === '/api/term/image' || url.pathname === '/api/session/close' || url.pathname === '/api/session/create') && !sameOrigin(req)) {
         return json(res, 403, { error: '来源不允许' });
       }
       if (route === 'POST /api/term/image') return await this.image(req, res, url);
       if (route === 'POST /api/session/close') return await this.closeSession(req, res, url);
+      if (route === 'GET /api/create-options') return await this.createOptions(res, url);
+      if (route === 'GET /api/claude-history') return await this.claudeHistory(res, url);
+      if (route === 'POST /api/session/create') return await this.createSession(req, res, url);
       if (route === 'POST /api/update/check') {
         void this.updater.check();
         return json(res, 202, this.updateStatus());
@@ -200,6 +205,43 @@ export class Web {
     const r = await this.agents.closeSession(machine, session, req.socket.remoteAddress ?? '');
     if (r.ok) return json(res, 200, { ok: true });
     json(res, r.status, r.reason ? { error: r.error, reason: r.reason } : { error: r.error });
+  }
+
+  /** GET /api/create-options?machine=…：新建会话对话框的选项（用户目录、最近目录、SSH 主机） */
+  private async createOptions(res: ServerResponse, url: URL) {
+    const machine = url.searchParams.get('machine') ?? '';
+    if (!machine) return json(res, 400, { error: '参数错误' });
+    const r = await this.agents.createOptions(machine);
+    if (!r.ok) return fail(res, r);
+    json(res, 200, { home: r.home, recent: r.recent, hosts: r.hosts });
+  }
+
+  /** GET /api/claude-history?machine=…&cwd=…：本地目录下可恢复的 Claude 对话 */
+  private async claudeHistory(res: ServerResponse, url: URL) {
+    const machine = url.searchParams.get('machine') ?? '';
+    const cwd = url.searchParams.get('cwd') ?? '';
+    if (!machine || !cwd || cwd.length > MAX_PATH) return json(res, 400, { error: '参数错误' });
+    const r = await this.agents.claudeHistory(machine, cwd);
+    if (!r.ok) return fail(res, r);
+    json(res, 200, { items: r.items });
+  }
+
+  /** POST /api/session/create?machine=…：请求体 JSON {target, resume?, cols?, rows?}，成功回新会话编号 */
+  private async createSession(req: IncomingMessage, res: ServerResponse, url: URL) {
+    const machine = url.searchParams.get('machine') ?? '';
+    if (!machine) return json(res, 400, { error: '参数错误' });
+    if (!String(req.headers['content-type']).startsWith('application/json')) return json(res, 415, { error: '需要 JSON' });
+    let body: any;
+    try {
+      body = JSON.parse(await readBody(req, 16 * 1024));
+    } catch {
+      return json(res, 400, { error: '请求格式错误' });
+    }
+    const cr = parseCreate(body);
+    if (!cr) return json(res, 400, { error: '参数错误' });
+    const r = await this.agents.createSession(machine, cr, req.socket.remoteAddress ?? '');
+    if (!r.ok) return fail(res, r);
+    json(res, 200, { sessionId: r.sessionId });
   }
 
   private authed(req: IncomingMessage) {
@@ -354,6 +396,40 @@ function sameOrigin(req: IncomingMessage) {
   } catch {
     return false;
   }
+}
+
+/** 目录 / 主机等字符串参数的长度上限 */
+const MAX_PATH = 1024;
+const optStr = (v: unknown, max: number) => v === undefined || (typeof v === 'string' && v.length <= max);
+
+/** 校验新建会话请求体，只保留约定字段；非法返回 undefined */
+function parseCreate(b: any): CreateRequest | undefined {
+  const t = b?.target;
+  if (typeof t !== 'object' || t === null || !optStr(t.cwd, MAX_PATH)) return;
+  const cwd = t.cwd ? { cwd: t.cwd as string } : {};
+  let target: CreateRequest['target'];
+  if (t.kind === 'local') target = { kind: 'local', ...cwd };
+  else if (t.kind === 'remote' && typeof t.hostId === 'string' && t.hostId && t.hostId.length <= 256) target = { kind: 'remote', hostId: t.hostId, ...cwd };
+  else return;
+  const out: CreateRequest = { target };
+  const rs = b.resume;
+  if (rs !== undefined && rs !== null) {
+    // 恢复 Claude 对话仅本地会话有效
+    if (t.kind !== 'local' || typeof rs !== 'object' || typeof rs.id !== 'string' || !rs.id || rs.id.length > 128
+      || !optStr(rs.permissionMode, 64) || (rs.bypass !== undefined && typeof rs.bypass !== 'boolean')) return;
+    out.resume = { id: rs.id, ...(rs.permissionMode === undefined ? {} : { permissionMode: rs.permissionMode }), ...(rs.bypass === undefined ? {} : { bypass: rs.bypass }) };
+  }
+  if (b.cols !== undefined || b.rows !== undefined) {
+    if (!size(b.cols) || !size(b.rows)) return;
+    out.cols = b.cols;
+    out.rows = b.rows;
+  }
+  return out;
+}
+
+/** daemon 侧失败：daemon 回的 reason 一并返回 */
+function fail(res: ServerResponse, r: Failure) {
+  json(res, r.status, r.reason ? { error: r.error, reason: r.reason } : { error: r.error });
 }
 
 const size = (v: unknown) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000;

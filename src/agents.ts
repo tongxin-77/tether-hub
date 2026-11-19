@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import type { AuditRec } from './audit.js';
+import type { AuditRec, CreateAuditRec } from './audit.js';
 import { findToken, type MachineRec, type TokenRec } from './store.js';
 
 export const PROTO = 2;
@@ -14,7 +14,7 @@ export const MAX_MESSAGE = 1024 * 1024;
 /** daemon 连接（/agent）单条消息上限：attached 可带最多约 1 MB 原始字节的历史（base64 后更大） */
 export const MAX_AGENT_MESSAGE = 4 * 1024 * 1024;
 /** hub 支持的能力位（协议 v2 能力位协商），随 welcome 下发；双方都声明的才使用 */
-export const HUB_CAPS = ['history', 'image', 'close'];
+export const HUB_CAPS = ['history', 'image', 'close', 'create'];
 /** 贴图：允许的类型、单张上限、分块大小（原始字节）、等待 daemon 回复的默认超时 */
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 export const MAX_IMAGE = 10 * 1024 * 1024;
@@ -28,6 +28,16 @@ const CLOSE_TIMEOUT = 10_000;
 const CLOSE_REASON: Record<string, string> = {
   disabled: '本机未允许 hub 远程接管（关闭会话复用该开关）',
   not_found: '会话不存在或已退出',
+};
+/** 网页新建会话：取选项 / 列 Claude 历史对话、新建的默认超时（远程连接较慢） */
+const QUERY_TIMEOUT = 10_000;
+const CREATE_TIMEOUT = 30_000;
+/** createOptionsResult / claudeHistoryResult / createResult 失败原因 → 中文说明 */
+const CREATE_REASON: Record<string, string> = {
+  disabled: '本机未允许 hub 远程接管（新建会话复用该开关）',
+  not_found: 'SSH 主机不存在',
+  auth_required: 'SSH 需要输入密码或确认主机指纹',
+  error: '本机操作失败',
 };
 /** daemon 回 imageFailed 的原因 → 中文说明 */
 const IMAGE_REASON: Record<string, string> = {
@@ -120,6 +130,8 @@ interface Conn {
   uploads: Map<string, Upload>;
   /** requestId → 等待 closeResult 的关闭请求 */
   closes: Map<string, Closing>;
+  /** requestId → 等待 *Result 的 create 能力请求（createOptions / claudeHistory / create） */
+  requests: Map<string, Pending>;
 }
 
 /** 网页关闭会话的结果：成功，或附 HTTP 状态码与中文原因 */
@@ -131,6 +143,28 @@ interface Closing {
   done: (r: CloseResult, auditReason?: string) => void;
 }
 
+/** create 能力请求的失败：附 HTTP 状态码与中文原因（reason 为 daemon 回的原因） */
+export type Failure = { ok: false; status: number; error: string; reason?: string };
+type Reply = { ok: true; msg: Record<string, unknown> } | Failure;
+
+interface Pending {
+  /** 期待的回复类型 */
+  result: string;
+  /** 结束请求（只生效一次） */
+  done: (r: Reply, auditReason?: string) => void;
+}
+
+/** 新建会话的目标与可选参数（由 Web 层校验后原样转给 daemon） */
+export interface CreateRequest {
+  target: { kind: 'local'; cwd?: string } | { kind: 'remote'; hostId: string; cwd?: string };
+  resume?: { id: string; permissionMode?: string; bypass?: boolean };
+  cols?: number;
+  rows?: number;
+}
+
+export type CreateOptions = { ok: true; home: string; recent: Record<string, unknown>[]; hosts: Record<string, unknown>[] };
+export type ClaudeHistory = { ok: true; items: Record<string, unknown>[] };
+
 export interface AgentOptions {
   hubVersion: string;
   helloTimeoutMs: number;
@@ -140,12 +174,15 @@ export interface AgentOptions {
   /** 机器档案变化（上线 / 下线）时调用，用于持久化 */
   persist: () => void;
   /** 记录一条接管审计 */
-  audit: (rec: AuditRec) => void;
+  audit: (rec: AuditRec | CreateAuditRec) => void;
   log: (msg: string) => void;
   /** 贴图等待 daemon 回复的超时（默认 60 s，测试可缩短） */
   imageTimeoutMs?: number;
   /** 关闭会话等待 daemon 回复的超时（默认 10 s，测试可缩短） */
   closeTimeoutMs?: number;
+  /** 新建会话：取选项 / 列 Claude 历史对话等待 daemon 回复的超时（默认 10 s）与新建的超时（默认 30 s），测试可缩短 */
+  queryTimeoutMs?: number;
+  createTimeoutMs?: number;
 }
 
 const SESSION_KEYS = ['id', 'name', 'cwd', 'command', 'status', 'startedAt', 'lastActivityAt', 'host', 'hostId', 'claude'] as const;
@@ -160,6 +197,12 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 function parseCaps(v: unknown): Set<string> {
   if (!Array.isArray(v) || v.length > 16 || !v.every((c) => str(c, 1, 64))) return new Set();
   return new Set(v.filter((c) => HUB_CAPS.includes(c)));
+}
+
+/** 数组中满足 ok 的对象只保留已知字段（daemon 回复转给浏览器前过滤） */
+function pickAll(v: unknown, keys: readonly string[], ok: (o: Record<string, unknown>) => boolean): Record<string, unknown>[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((o): o is Record<string, unknown> => isObj(o) && ok(o)).map((o) => Object.fromEntries(keys.filter((k) => k in o).map((k) => [k, o[k]])));
 }
 
 /** 只保留 SessionInfo 中已知字段 */
@@ -212,7 +255,7 @@ export class Agents extends EventEmitter {
   }
 
   private onConnection(ws: WebSocket, token: TokenRec, addr: string) {
-    const conn: Conn = { ws, machineId: '', tokenHash: token.sha256, alive: true, takeovers: new Map(), caps: new Set(), uploads: new Map(), closes: new Map() };
+    const conn: Conn = { ws, machineId: '', tokenHash: token.sha256, alive: true, takeovers: new Map(), caps: new Set(), uploads: new Map(), closes: new Map(), requests: new Map() };
     this.all.add(conn);
     ws.on('pong', () => (conn.alive = true));
     ws.on('error', (e) => this.opt.log(`连接错误（${addr}）：${e.message}`));
@@ -261,6 +304,15 @@ export class Agents extends EventEmitter {
         if (msg.ok === true) return c.done({ ok: true });
         const reason = String(msg.reason);
         return c.done({ ok: false, status: 422, error: CLOSE_REASON[reason] ?? `关闭失败（${reason}）`, reason }, reason);
+      }
+      if (typeof msg.requestId === 'string' && conn.requests.get(msg.requestId)?.result === msg.type) {
+        const p = conn.requests.get(msg.requestId)!;
+        if (msg.ok === true) return p.done({ ok: true, msg });
+        const reason = String(msg.reason);
+        // daemon 附的 message（如 auth_required 的可读说明）接在原因后面；disabled 的说明与原因重复，不接
+        const detail = reason !== 'disabled' && typeof msg.message === 'string' ? msg.message.slice(0, 500) : '';
+        const text = CREATE_REASON[reason] ?? `操作失败（${reason}）`;
+        return p.done({ ok: false, status: 422, error: detail ? `${text}：${detail}` : text, reason }, reason);
       }
       if ((msg.type === 'imageSaved' || msg.type === 'imageFailed') && typeof msg.uploadId === 'string') {
         const u = conn.uploads.get(msg.uploadId);
@@ -389,6 +441,7 @@ export class Agents extends EventEmitter {
     }
     this.failUploads(conn);
     for (const c of [...conn.closes.values()]) c.done({ ok: false, status: 409, error: '机器已断开' }, 'disconnected');
+    for (const p of [...conn.requests.values()]) p.done({ ok: false, status: 409, error: '机器已断开' }, 'disconnected');
   }
 
   /**
@@ -457,6 +510,81 @@ export class Agents extends EventEmitter {
       conn.closes.set(requestId, c);
       timer = setTimeout(() => c.done({ ok: false, status: 504, error: '等待本机关闭会话超时' }, 'timeout'), this.opt.closeTimeoutMs ?? CLOSE_TIMEOUT);
       send(conn.ws, { type: 'close', sessionId, requestId });
+    });
+  }
+
+  /** 网页新建会话：取最近目录、SSH 主机列表与用户目录 */
+  async createOptions(machineId: string): Promise<CreateOptions | Failure> {
+    const conn = this.createConn(machineId);
+    if ('ok' in conn) return conn;
+    const r = await this.request(conn, { type: 'createOptions' }, 'createOptionsResult', this.opt.queryTimeoutMs ?? QUERY_TIMEOUT);
+    if (!r.ok) return r;
+    return {
+      ok: true,
+      home: typeof r.msg.home === 'string' ? r.msg.home : '',
+      recent: pickAll(r.msg.recent, ['kind', 'cwd', 'hostId', 'host'], (o) => (o.kind === 'local' || o.kind === 'remote') && typeof o.cwd === 'string'),
+      hosts: pickAll(r.msg.hosts, ['id', 'name'], (o) => typeof o.id === 'string'),
+    };
+  }
+
+  /** 网页新建会话：列出本地目录 cwd 下的 Claude 历史对话 */
+  async claudeHistory(machineId: string, cwd: string): Promise<ClaudeHistory | Failure> {
+    const conn = this.createConn(machineId);
+    if ('ok' in conn) return conn;
+    const r = await this.request(conn, { type: 'claudeHistory', cwd }, 'claudeHistoryResult', this.opt.queryTimeoutMs ?? QUERY_TIMEOUT);
+    if (!r.ok) return r;
+    return { ok: true, items: pickAll(r.msg.items, ['id', 'title', 'mtime', 'messages', 'permissionMode', 'bypass', 'open'], (o) => typeof o.id === 'string') };
+  }
+
+  /** 网页新建会话：发 create，等 daemon 回 createResult（成功前 daemon 已上报 sessions）；记审计 create / create_failed */
+  async createSession(machineId: string, req: CreateRequest, ip: string): Promise<{ ok: true; sessionId: number } | Failure> {
+    const conn = this.createConn(machineId);
+    if ('ok' in conn) return conn;
+    const t = req.target;
+    const target = `${t.kind === 'remote' ? `ssh ${t.hostId}` : 'local'} ${t.cwd || '~'}${req.resume ? `（恢复 Claude 对话 ${req.resume.id}）` : ''}`;
+    const r = await this.request(conn, { type: 'create', ...req }, 'createResult', this.opt.createTimeoutMs ?? CREATE_TIMEOUT, (r, auditReason) => {
+      const m = this.machines.get(conn.machineId);
+      const sessionId = r.ok && Number.isInteger(r.msg.sessionId) ? (r.msg.sessionId as number) : undefined;
+      const rec: CreateAuditRec = {
+        time: new Date().toISOString(), event: r.ok ? 'create' : 'create_failed', machineId: conn.machineId, machineName: m?.name ?? '',
+        ...(sessionId === undefined ? {} : { sessionId, sessionName: m?.sessions.find((s) => s.id === sessionId)?.name ?? '' }),
+        target, ip, ...(r.ok ? {} : { reason: auditReason }),
+      };
+      this.opt.log(`接管审计：${rec.event} ${rec.machineName}（${rec.machineId}）${target}${rec.reason ? `，${rec.reason}` : ''}，${ip}`);
+      this.opt.audit(rec);
+    });
+    if (!r.ok) return r;
+    const id = r.msg.sessionId;
+    if (!Number.isInteger(id) || (id as number) < 0) return { ok: false, status: 502, error: '本机回复格式错误' };
+    return { ok: true, sessionId: id as number };
+  }
+
+  /** create 能力请求的前置检查：机器在线且双方都有 create 能力 */
+  private createConn(machineId: string): Conn | Failure {
+    const conn = this.conns.get(machineId);
+    if (!conn) return { ok: false, status: 409, error: '机器离线' };
+    if (!conn.caps.has('create')) return { ok: false, status: 409, error: '该机器的 Tether 不支持网页新建会话（请更新 Tether）' };
+    return conn;
+  }
+
+  /** 发出带 requestId 的请求，等 daemon 回 result 类型的消息；超时 504、断线 409 */
+  private request(conn: Conn, msg: Record<string, unknown>, result: string, timeoutMs: number, onDone?: (r: Reply, auditReason?: string) => void): Promise<Reply> {
+    const requestId = randomUUID();
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | undefined;
+      const p: Pending = {
+        result,
+        done: (r, auditReason) => {
+          if (conn.requests.get(requestId) !== p) return;
+          conn.requests.delete(requestId);
+          clearTimeout(timer);
+          onDone?.(r, auditReason);
+          resolve(r);
+        },
+      };
+      conn.requests.set(requestId, p);
+      timer = setTimeout(() => p.done({ ok: false, status: 504, error: '等待本机回复超时' }, 'timeout'), timeoutMs);
+      send(conn.ws, { ...msg, requestId });
     });
   }
 

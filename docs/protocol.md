@@ -46,7 +46,7 @@
 **welcome**（hub 校验 hello 通过后回复）
 
 ```json
-{ "type": "welcome", "proto": 2, "hubVersion": "0.4.0", "caps": ["history", "image", "close"] }
+{ "type": "welcome", "proto": 2, "hubVersion": "0.4.0", "caps": ["history", "image", "close", "create"] }
 ```
 
 `caps`：hub 支持的能力名（第 8 节），旧 hub 不带。
@@ -129,14 +129,14 @@ hub 将接管事件逐行追加到 `HUB_DATA_DIR/audit.jsonl`，每行一个 JSO
 
 `event`：`start`（浏览器发起接管且 daemon 回 `attached`）/ `denied`（附 `reason`）/ `end`（hub 侧结束：最后一个浏览器离开）/ `reclaimed`（本地收回）/ `disabled` / `exited` / `disconnected`（机器断线导致结束）。`ip` 为发起或最后离开的浏览器来源 IP（有则记）。Web 界面可查看最近的审计记录。
 
-贴图（第 8.3 节）另记 `image`（成功，附 `bytes`、`mime`、`ip`）与 `image_failed`（附 `reason`：daemon 回的原因，或 hub 侧的 `timeout` / `ended`），不记保存路径、不存图片。网页关闭会话（第 8.4 节）记 `close`（成功）与 `close_failed`（附 `reason`：daemon 回的原因，或 hub 侧的 `timeout` / `disconnected`）。
+贴图（第 8.3 节）另记 `image`（成功，附 `bytes`、`mime`、`ip`）与 `image_failed`（附 `reason`：daemon 回的原因，或 hub 侧的 `timeout` / `ended`），不记保存路径、不存图片。网页关闭会话（第 8.4 节）记 `close`（成功）与 `close_failed`（附 `reason`：daemon 回的原因，或 hub 侧的 `timeout` / `disconnected`）。网页新建会话（第 8.5 节）记 `create`（成功，附新会话 `sessionId` / `sessionName`、目标摘要 `target`、`ip`）与 `create_failed`（附 `target`、`ip`、`reason`：daemon 回的原因，或 hub 侧的 `timeout` / `disconnected`；无 `sessionId`）。
 
 ## 8. 能力位（v2）
 
 ### 8.1 协商
 
 - `hello.caps` 与 `welcome.caps` 均为字符串数组，可缺省（= 空集），未知能力名忽略。`proto` 保持 2。
-- 双方只使用两边都声明的能力。当前能力名：`history`、`image`、`close`。
+- 双方只使用两边都声明的能力。当前能力名：`history`、`image`、`close`、`create`。
 - 旧 hub（`welcome` 无 `caps`）→ Tether 不发 history、不期待图片；新 hub + 旧 Tether（`hello` 无 `caps`）→ hub 记为空集，网页无历史、贴图按钮置灰提示「需 Tether 0.5.0+」。两种情况都不断开。
 - hub 的 `/agent` 单条消息上限为 4 MB（浏览器 `/api/term` 仍为 1 MB）。
 
@@ -189,3 +189,51 @@ hub 将接管事件逐行追加到 `HUB_DATA_DIR/audit.jsonl`，每行一个 JSO
 - `reason`：`disabled`（本机未开启「允许 hub 远程接管本机会话」，复用该开关，不新增设置）/ `not_found`（会话不存在或已退出）。
 - 不要求该会话正被接管。daemon 用与本地 UI「关闭会话」相同的路径结束会话（本地会话结束进程树、SSH 会话关闭通道），之后照常通过 `sessions` 上报（该会话从列表中消失，与本地 UI 关闭一致）；若正被接管，先发 `detached`（`reason: "exited"`）再发 `closeResult`。hub 对此 `detached` 照常记审计 `exited`，并告知浏览器 `session_closed`；`closeResult` 另记 `close`。
 - hub：等待回复 10 s 超时；断线时放弃等待。
+
+### 8.5 网页新建会话 create
+
+网页在某台在线机器上新建会话：本地会话（可选目录）、SSH 会话（选主机，可选目录）、恢复 Claude 历史对话（仅本地）。建好后网页直接接管该会话；桌面端侧栏出现新会话但不切换过去。以下三组消息都属于能力 `create`，均为 hub → daemon 请求、daemon → hub 回复，以 `requestId`（hub 生成的随机串）关联。权限复用「允许 hub 远程接管本机会话」开关，关闭时一律回 `ok: false, reason: "disabled"`。
+
+**1. 取新建选项**
+
+```json
+{ "type": "createOptions", "requestId": "<随机串>" }
+{ "type": "createOptionsResult", "requestId": "…", "ok": true,
+  "home": "C:\\Users\\x",
+  "recent": [{ "kind": "local", "cwd": "C:\\work\\a" }, { "kind": "remote", "hostId": "h1", "host": "dev", "cwd": "/srv" }],
+  "hosts": [{ "id": "h1", "name": "dev" }] }
+{ "type": "createOptionsResult", "requestId": "…", "ok": false, "reason": "disabled" }
+```
+
+- `home`：本机用户目录（网页作为目录占位提示）。
+- `recent`：最近目录（最多 20 条，新的在前）；`remote` 项带 `hostId` 与 `host`（显示名），对应主机已不存在的不列出。
+- `hosts`：已配置的 SSH 主机 id 与显示名。
+
+**2. 列出 Claude 历史对话（仅本地目录）**
+
+```json
+{ "type": "claudeHistory", "requestId": "…", "cwd": "C:\\work\\a" }
+{ "type": "claudeHistoryResult", "requestId": "…", "ok": true,
+  "items": [{ "id": "<uuid>", "title": "…", "mtime": 1731800000000, "messages": 12, "permissionMode": "acceptEdits", "bypass": false, "open": false }] }
+```
+
+- 数据与桌面端「恢复 Claude 对话…」相同；`open` 为已有会话正在运行该对话。最多 50 条，按 `mtime`（毫秒）新到旧。
+- 失败：`ok: false` + `reason`（`disabled` / `error`）+ 可选 `message`。
+
+**3. 新建**
+
+```json
+{ "type": "create", "requestId": "…", "target": { "kind": "local", "cwd": "C:\\work\\a" },
+  "resume": { "id": "<uuid>", "permissionMode": "acceptEdits", "bypass": false }, "cols": 120, "rows": 32 }
+{ "type": "createResult", "requestId": "…", "ok": true, "sessionId": 7 }
+{ "type": "createResult", "requestId": "…", "ok": false, "reason": "auth_required", "message": "需要密码，请先在桌面端连接一次或配置密钥" }
+```
+
+- `target`：`{ "kind": "local", "cwd"?: string }` 或 `{ "kind": "remote", "hostId": string, "cwd"?: string }`；`cwd` 缺省或空 = 用户目录（远程为登录目录）。
+- `resume` 仅 `local` 有效，可省略。`cols` / `rows`（1–1000）可省略，daemon 默认 120×32；hub 网页当前不带，接管后按网页终端实际尺寸 `resize`。
+- `reason`：`disabled` / `not_found`（`hostId` 不存在）/ `auth_required`（SSH 需要密码 / 口令 / 确认主机指纹：hub 发起的新建不弹任何提示，直接失败，`message` 给出可读说明）/ `error`（其他失败，`message` 说明）。
+- 成功回复前 daemon 已通过 `sessions` 上报新会话，但不让桌面端切换到它。
+
+hub：
+- `createOptions` / `claudeHistory` 等待回复 10 s 超时，`create` 30 s 超时（远程连接较慢）；断线时放弃等待。按 `requestId` 与回复 `type` 匹配，不符的回复忽略。
+- 转给浏览器前只保留上述已知字段；未知 `reason` 显示为「操作失败（<reason>）」，有 `message` 时接在原因后显示。

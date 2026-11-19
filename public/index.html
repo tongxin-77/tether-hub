@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="/style.css">
 <script src="/xterm/xterm.js" defer></script>
 <script src="/xterm/addon-fit.js" defer></script>
+<script src="/img.js" defer></script>
+<script src="/textview.js" defer></script>
 <script src="/app.js" defer></script>
 </head>
 <body>
@@ -79,6 +81,7 @@
       <div class="right">
         <span id="t-tag"></span>
         <button class="btn btn-sm only-d" id="t-close">关闭</button>
+        <button class="btn btn-sm tv-btn only-m" id="t-text" aria-label="以文本查看（可选择复制、长截图）">文本</button>
         <button class="btn close only-m" id="t-close-m" aria-label="关闭"><i data-i="x"></i></button>
       </div>
     </header>
@@ -89,7 +92,7 @@
     </div>
     <div class="keys" id="keys">
       <button data-key="esc">Esc</button><button data-key="tab">Tab</button><button data-key="ctrl" aria-pressed="false">Ctrl</button><button data-key="up" aria-label="上">↑</button><button data-key="down" aria-label="下">↓</button><button data-key="left" aria-label="左">←</button><button data-key="right" aria-label="右">→</button><button data-key="paste">粘贴</button><button data-key="image">图片</button>
-      <input type="file" id="img-file" accept="image/*" hidden>
+      <input type="file" id="img-file" accept="image/*" multiple hidden>
     </div>
   </section>
 
@@ -118,17 +121,51 @@
     </div>
   </div>
 
+  <!-- 网页新建会话 -->
+  <div class="modal" id="nc" hidden>
+    <form class="modal-card" id="nc-form" role="dialog" aria-modal="true" aria-labelledby="nc-title">
+      <div class="card-head"><h3 id="nc-title">新建会话</h3><button class="btn btn-ghost btn-icon modal-x" type="button" id="nc-close" aria-label="关闭"><i data-i="x"></i></button></div>
+      <div class="card-body">
+        <div class="nc-sub" id="nc-sub"></div>
+        <div class="nc-seg" role="radiogroup" aria-label="会话类型">
+          <label><input type="radio" name="nc-kind" value="local" checked>本地</label><label><input type="radio" name="nc-kind" value="remote">SSH</label>
+        </div>
+        <div id="nc-host-row" hidden>
+          <div class="upd-sec">SSH 主机</div>
+          <select class="select" id="nc-host" aria-label="SSH 主机"></select>
+        </div>
+        <div class="upd-sec">目录</div>
+        <div class="nc-dir">
+          <input class="input mono" id="nc-cwd" maxlength="1024" autocomplete="off" spellcheck="false" aria-label="目录">
+          <select class="select" id="nc-recent" aria-label="最近目录"></select>
+        </div>
+        <div id="nc-resume-row">
+          <label class="nc-chk"><input type="checkbox" id="nc-resume">恢复 Claude 对话</label>
+          <div class="nc-hist" id="nc-hist" hidden></div>
+        </div>
+        <div class="err-tip" id="nc-err" role="alert"></div>
+        <div class="upd-acts"><button class="btn" type="button" id="nc-cancel">取消</button><button class="btn btn-primary" type="submit" id="nc-ok">新建</button></div>
+      </div>
+    </form>
+  </div>
+
   <!-- 接管终端：无法读取剪贴板时手动粘贴 -->
   <div class="modal" id="paste" hidden>
     <form class="modal-card" id="paste-form" role="dialog" aria-modal="true" aria-labelledby="paste-title">
       <div class="card-head"><h3 id="paste-title">粘贴到终端</h3><button class="btn btn-ghost btn-icon modal-x" type="button" id="paste-close" aria-label="关闭"><i data-i="x"></i></button></div>
       <div class="card-body">
         <textarea class="input paste-ta" id="paste-text" placeholder="在此长按粘贴或输入文本" aria-label="要粘贴的文本"></textarea>
-        <div class="tok-tip">当前无法直接读取剪贴板；https 下可一键粘贴。</div>
+        <div class="tok-tip">当前无法直接读取剪贴板；https 下可一键粘贴。也可在此长按粘贴图片。</div>
         <div class="upd-acts"><button class="btn" type="button" id="paste-cancel">取消</button><button class="btn btn-primary" type="submit">发送</button></div>
       </div>
     </form>
   </div>
+</div>
+
+<!-- 接管终端：文本视图（手机），打开时隐藏 #app，由文档本身滚动以便长按选择与系统长截图 -->
+<div class="tv" id="tv">
+  <div class="tv-bar"><b>文本视图</b><span class="tv-tip" id="tv-tip" role="status"></span><button class="btn btn-sm" id="tv-copy">复制全部</button><button class="btn btn-sm" id="tv-close">关闭</button></div>
+  <pre class="tv-pre" id="tv-pre"></pre>
 </div>
 </body>
 </html>

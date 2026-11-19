@@ -1,6 +1,7 @@
 // Tether Hub Web 界面：登录、SSE 实时接收机器 / 会话状态并按主从布局渲染；远程接管终端（xterm.js，含回看历史、粘贴与贴图）；审计日志。
 // 版本与更新：顶栏版本按钮 / 新版本胶囊 + 更新面板（检查、一键更新、进度日志、重启后自动刷新）。
 // 机器 token：顶栏「Token」面板（列表、签发并一次性显示明文、页内二次确认吊销）。
+// 网页新建会话：机器详情会话卡片头「新建会话」对话框（本地 / SSH、最近目录、恢复 Claude 对话），建好后直接接管。
 // 页面：#main 机器与会话（手机上为机器列表）、#detail 机器详情（仅手机两级页面用）、#term 接管终端、#audit 审计日志。
 'use strict';
 
@@ -45,6 +46,8 @@ const EV = {
   image_failed: ['贴图失败', 't-err', '贴图失败'],
   close: ['关闭会话', 't-warn', '网页关闭了远端会话'],
   close_failed: ['关闭失败', 't-err', '网页关闭会话失败'],
+  create: ['新建会话', 't-pri', '网页新建了会话'],
+  create_failed: ['新建失败', 't-err', '网页新建会话失败'],
 };
 const REASON = {
   reclaimed: '已被本地收回', disabled: '本机未允许接管', exited: '会话已退出', offline: '机器离线',
@@ -52,6 +55,8 @@ const REASON = {
   // 贴图失败（image_failed）
   not_taken_over: '会话未被 hub 接管', unsupported: '仅本地会话支持贴图', too_large: '图片过大', bad_type: '文件内容与图片类型不符',
   io: '本机保存图片失败', timeout: '等待本机回复超时', ended: '上传期间接管结束', disconnected: '等待期间机器断开',
+  // 新建会话失败（create_failed；not_found 此时指 SSH 主机不存在）
+  auth_required: 'SSH 需要密码或确认主机指纹', error: '本机操作失败',
 };
 
 let state = null;
@@ -266,6 +271,13 @@ function closeBtn(m, s) {
   return `<button class="btn btn-sm" data-close ${attrs} title="结束该会话（本机需允许 hub 远程接管）">关闭</button>${err}`;
 }
 
+/** 会话卡片头的「新建会话」：机器离线或 Tether 不支持时置灰并说明原因 */
+function newBtn(m) {
+  const why = !m.online ? '机器离线' : !(m.caps || []).includes('create') ? '网页新建会话需更新该机器的 Tether' : '';
+  if (why) return `<button class="btn btn-sm" disabled title="${why}">新建会话</button>`;
+  return `<button class="btn btn-sm btn-primary" data-new="${esc(m.machineId)}" title="在该机器上新建会话并直接接管（本机需允许 hub 远程接管）">新建会话</button>`;
+}
+
 async function closeSession(machineId, sid) {
   const key = `${machineId}/${sid}`;
   closeAsk = null;
@@ -316,7 +328,7 @@ function renderDetail() {
         <div class="di"><div class="dl">Token 名称</div><div class="dv mono">${esc(m.tokenName)}</div></div>
         <div class="di"><div class="dl">会话</div><div class="dv">${live(m)} 活动 / ${ss.length} 总计</div></div>
       </div></div></div>
-    <div class="card"><div class="card-head"><h3>会话</h3><div class="extra">${m.online ? '列表实时更新' : '离线，显示最后已知状态'}</div></div>
+    <div class="card"><div class="card-head"><h3>会话</h3><div class="extra">${m.online ? '列表实时更新' : '离线，显示最后已知状态'}${newBtn(m)}</div></div>
       ${ss.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>
         <th>名称 / 命令</th><th>工作目录</th><th>状态</th><th>Claude</th><th>SSH 主机</th><th>开始 / 最后活动</th><th class="r">操作</th></tr></thead><tbody>
         ${ss.map((s) => `<tr class="${rowCls(s)}">
@@ -546,6 +558,7 @@ function disposeTerm() {
   setCtrl(false);
   toast('');
   closePaste();
+  closeTv();
 }
 
 /** 离开终端页即断开接管 */
@@ -593,8 +606,7 @@ $('keys').addEventListener('click', (e) => {
 
 // 粘贴与贴图：「粘贴」键在 https（安全上下文）下直接读剪贴板，否则打开粘贴弹层手动粘贴；
 // 剪贴板只有图片（没有文本）时按贴图处理：POST /api/term/image，由 Tether 保存为临时文件并把路径输入到会话（需 Tether 0.5.0+，仅本地会话）
-const IMG_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-const MAX_IMG = 10 * 1024 * 1024;
+// 上传前由 img.js 的 prepareImage 缩放 / 重编码；IMG_TYPES、MAX_IMG 也在 img.js
 let imgBusy = false;
 let toastTimer = 0;
 
@@ -624,15 +636,26 @@ function toast(text, kind = '', ms = 0) {
   if (ms) toastTimer = setTimeout(() => (el.hidden = true), ms);
 }
 
-async function sendImage(blob) {
+/** 上传一张图片；成功返回 true */
+async function sendImage(file) {
   const why = imgBlock();
   if (why) return toast(why, 'err', 4000);
   if (imgBusy) return toast('上一张图片还在上传', 'err', 3000);
-  if (!IMG_TYPES.includes(blob.type)) return toast('仅支持 PNG / JPEG / GIF / WebP 图片', 'err', 4000);
-  if (blob.size > MAX_IMG) return toast('图片过大（上限 10 MB）', 'err', 4000);
   const ref = termRef;
   imgBusy = true;
-  toast('正在上传图片…');
+  toast('正在处理图片…');
+  let blob;
+  try {
+    blob = await prepareImage(file);
+  } catch (e) {
+    imgBusy = false;
+    return toast(e.message, 'err', 4000);
+  }
+  if (blob.size > MAX_IMG) {
+    imgBusy = false;
+    return toast('图片过大（上限 10 MB）', 'err', 4000);
+  }
+  toast(`正在上传图片…（${Math.ceil(blob.size / 1024)} KB）`);
   let ok = false;
   let msg;
   try {
@@ -651,6 +674,14 @@ async function sendImage(blob) {
   }
   imgBusy = false;
   if (termRef === ref) toast(msg, ok ? 'ok' : 'err', ok ? 2500 : 5000);
+  return ok;
+}
+
+/** 粘贴事件中只有图片（没有文本）时返回该图片文件 */
+function pastedImage(e) {
+  const items = [...(e.clipboardData ? e.clipboardData.items : [])];
+  const img = items.find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+  return img && !items.some((i) => i.type === 'text/plain') ? img.getAsFile() : null;
 }
 
 async function pasteKey() {
@@ -687,19 +718,29 @@ $('paste-close').addEventListener('click', closePaste);
 $('paste-cancel').addEventListener('click', closePaste);
 $('paste').addEventListener('click', (e) => e.target === $('paste') && closePaste());
 document.addEventListener('keydown', (e) => e.key === 'Escape' && !$('paste').hidden && closePaste());
-$('img-file').addEventListener('change', (e) => {
-  const f = e.target.files[0];
+// 弹层里长按粘贴图片（手机上读不到剪贴板时的贴图入口）
+$('paste-text').addEventListener('paste', (e) => {
+  const img = pastedImage(e);
+  if (!term || !img) return;
+  e.preventDefault();
+  closePaste();
+  setCtrl(false);
+  sendImage(img);
+});
+// 可多选：逐张串行上传，失败或切换了会话即停止
+$('img-file').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
   e.target.value = '';
-  if (f) sendImage(f);
+  const ref = termRef;
+  for (const f of files) if (termRef !== ref || !(await sendImage(f))) break;
 });
 // 桌面 Ctrl+V 贴截图：捕获阶段先于 xterm 拦下只含图片的剪贴板；带文本的粘贴照常交给 xterm
 $('term-box').addEventListener('paste', (e) => {
-  const items = [...(e.clipboardData ? e.clipboardData.items : [])];
-  const img = items.find((i) => i.kind === 'file' && i.type.startsWith('image/'));
-  if (!term || !img || items.some((i) => i.type === 'text/plain')) return;
+  const img = pastedImage(e);
+  if (!term || !img) return;
   e.preventDefault();
   e.stopPropagation();
-  sendImage(img.getAsFile());
+  sendImage(img);
 }, true);
 
 $('term-wrap').addEventListener('click', () => term && term.focus());
@@ -822,7 +863,225 @@ function tapOption(p) {
 const leaveTerm = () => (location.hash = isM() && selected() ? '#detail' : '#main');
 $('t-close').addEventListener('click', leaveTerm);
 $('t-close-m').addEventListener('click', leaveTerm);
+
+// 文本视图（手机）：xterm 不支持触摸选区、内部滚动也截不到长截图，故把缓冲区快照为纯文本（textview.js 的 bufferText）放进 <pre>，
+// html 加 tv-on 后隐藏 #app 并解除 html/body 的固定高度，由文档本身滚动；打开后不随新输出刷新，离开终端（disposeTerm）时关闭
+let tvTimer = 0;
+function openTv() {
+  if (!term) return;
+  term.blur(); // 收起软键盘
+  $('tv-pre').textContent = bufferText(term.buffer.active);
+  $('tv-tip').textContent = '';
+  document.documentElement.classList.add('tv-on');
+  scrollTo(0, document.documentElement.scrollHeight); // 定位到最新输出
+}
+function closeTv() {
+  if (!document.documentElement.classList.contains('tv-on')) return;
+  clearTimeout(tvTimer);
+  document.documentElement.classList.remove('tv-on');
+  $('tv-pre').textContent = '';
+  scrollTo(0, 0);
+}
+/** 复制全部：明文 http 下没有 clipboard API，退回选中全文 + execCommand，仍失败则保留选区提示手动复制 */
+async function copyTv() {
+  const pre = $('tv-pre');
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(pre.textContent);
+    ok = true;
+  } catch {
+    const r = document.createRange();
+    r.selectNodeContents(pre);
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+    try { ok = document.execCommand('copy'); } catch {}
+  }
+  clearTimeout(tvTimer);
+  $('tv-tip').textContent = ok ? '已复制' : '无法自动复制，已全选，请长按手动复制';
+  if (ok) tvTimer = setTimeout(() => ($('tv-tip').textContent = ''), 2500);
+}
+$('t-text').addEventListener('click', openTv);
+$('tv-close').addEventListener('click', closeTv);
+$('tv-copy').addEventListener('click', copyTv);
 $('t-banner').addEventListener('click', (e) => e.target.closest('[data-retake]') && connectTerm());
+
+// ---- 网页新建会话 ----
+
+/** 对话框状态：机器、选项 {home, recent, hosts}、Claude 历史 {cwd, items, err}、选中的对话 id、请求阶段（'' / create / open） */
+let nc = null;
+const ncKind = () => document.querySelector('input[name="nc-kind"]:checked').value;
+/** 恢复对话时实际使用的目录：留空 = 用户目录 */
+const ncCwd = () => $('nc-cwd').value.trim() || (nc.opts && nc.opts.home) || '';
+
+/** 返回 [状态码, JSON]；登录失效转登录页并返回 null；网络错误状态码为 0 */
+async function ncFetch(url, init) {
+  try {
+    const r = await fetch(url, init);
+    if (r.status === 401) {
+      closeNc();
+      showLogin('登录已失效，请重新登录');
+      return null;
+    }
+    return [r.status, await r.json().catch(() => ({}))];
+  } catch {
+    return [0, { error: '无法连接服务器' }];
+  }
+}
+
+function openNc(machineId) {
+  const m = machines().find((x) => x.machineId === machineId);
+  if (!m) return;
+  nc = { machineId, opts: null, hist: null, pick: null, busy: '' };
+  $('nc-sub').textContent = `机器：${mName(m)}`;
+  document.querySelector('input[name="nc-kind"][value="local"]').checked = true;
+  $('nc-cwd').value = '';
+  $('nc-resume').checked = false;
+  $('nc-recent').innerHTML = '<option value="">最近目录…</option>';
+  $('nc-host').innerHTML = '';
+  $('nc-err').textContent = '';
+  $('nc').hidden = false;
+  renderNc();
+  loadNcOpts();
+}
+
+function closeNc() {
+  $('nc').hidden = true;
+  nc = null;
+}
+
+async function loadNcOpts() {
+  const cur = nc;
+  const res = await ncFetch(`/api/create-options?machine=${encodeURIComponent(cur.machineId)}`);
+  if (!res || nc !== cur) return;
+  if (res[0] !== 200) $('nc-err').textContent = res[1].error || `读取新建选项失败（${res[0]}）`;
+  const o = (cur.opts = res[0] === 200 ? res[1] : { home: '', recent: [], hosts: [] });
+  $('nc-recent').innerHTML = `<option value="">${o.recent.length ? '最近目录…' : '没有最近目录'}</option>`
+    + o.recent.map((r, i) => `<option value="${i}">${esc(r.kind === 'remote' ? `${r.host || r.hostId}：${r.cwd}` : r.cwd)}</option>`).join('');
+  $('nc-host').innerHTML = o.hosts.map((h) => `<option value="${esc(h.id)}">${esc(h.name || h.id)}</option>`).join('')
+    || '<option value="">没有已配置的 SSH 主机</option>';
+  ncChanged();
+}
+
+/** 类型 / 目录 / 勾选变化：恢复对话时按当前目录拉取历史 */
+function ncChanged() {
+  if (!nc) return;
+  if (ncKind() === 'local' && $('nc-resume').checked && nc.opts) loadNcHist();
+  renderNc();
+}
+
+async function loadNcHist() {
+  const cwd = ncCwd();
+  if (nc.hist && nc.hist.cwd === cwd && !nc.hist.err) return;
+  const cur = nc;
+  cur.hist = { cwd, items: null, err: '' };
+  cur.pick = null;
+  if (!cwd) {
+    cur.hist.err = '请先填写目录';
+    return;
+  }
+  const res = await ncFetch(`/api/claude-history?machine=${encodeURIComponent(cur.machineId)}&cwd=${encodeURIComponent(cwd)}`);
+  if (!res || nc !== cur || cur.hist.cwd !== cwd) return;
+  if (res[0] === 200) cur.hist.items = res[1].items || [];
+  else cur.hist.err = res[1].error || `读取 Claude 对话失败（${res[0]}）`;
+  renderNc();
+}
+
+function renderNc() {
+  if (!nc) return;
+  const local = ncKind() === 'local';
+  const o = nc.opts;
+  $('nc-host-row').hidden = local;
+  $('nc-resume-row').hidden = !local;
+  $('nc-cwd').placeholder = !local ? '留空 = 登录目录' : !o ? '加载中…' : o.home ? `留空 = 用户目录（${o.home}）` : '留空 = 用户目录';
+  $('nc-ok').disabled = !!nc.busy;
+  $('nc-ok').textContent = nc.busy === 'create' ? '新建中…' : nc.busy === 'open' ? '正在打开…' : '新建';
+  const box = $('nc-hist');
+  box.hidden = !local || !$('nc-resume').checked;
+  if (box.hidden) return;
+  const h = nc.hist;
+  box.innerHTML = !h || (!h.items && !h.err) ? '<div class="empty">加载中…</div>'
+    : h.err ? `<div class="err-tip">${esc(h.err)}</div>`
+    : !h.items.length ? `<div class="empty">该目录下没有 Claude 对话<br><span class="mono">${esc(h.cwd)}</span></div>`
+    : h.items.map((it) => `<button type="button" class="nc-item${nc.pick === it.id ? ' on' : ''}" data-hid="${esc(it.id)}">
+        <span class="nc-t" title="${esc(it.title || it.id)}">${esc(it.title || it.id)}</span>
+        <span class="nc-m"><span title="${esc(fullTime(it.mtime))}">${ago(it.mtime)}</span>${typeof it.messages === 'number' ? `<span>${it.messages} 条消息</span>` : ''}${it.open ? '<span class="tag t-warn">已打开</span>' : ''}</span></button>`).join('');
+}
+
+async function submitNc() {
+  const cur = nc;
+  if (!cur || cur.busy) return;
+  const err = (t) => ($('nc-err').textContent = t);
+  const local = ncKind() === 'local';
+  const cwd = $('nc-cwd').value.trim();
+  const target = local ? { kind: 'local' } : { kind: 'remote', hostId: $('nc-host').value };
+  if (cwd) target.cwd = cwd;
+  if (!local && !target.hostId) return err('请选择 SSH 主机');
+  const body = { target };
+  if (local && $('nc-resume').checked) {
+    const it = cur.hist && cur.hist.cwd === ncCwd() && cur.hist.items && cur.hist.items.find((x) => x.id === cur.pick);
+    if (!it) return err('请选择要恢复的 Claude 对话');
+    body.resume = { id: it.id, bypass: !!it.bypass, ...(typeof it.permissionMode === 'string' ? { permissionMode: it.permissionMode } : {}) };
+  }
+  // 不带 cols / rows：daemon 按 120×32 建，接管后终端按网页实际尺寸 resize
+  err('');
+  cur.busy = 'create';
+  renderNc();
+  const res = await ncFetch(`/api/session/create?machine=${encodeURIComponent(cur.machineId)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!res || nc !== cur) return;
+  if (res[0] !== 200) {
+    cur.busy = '';
+    err(res[1].error || `新建失败（${res[0]}）`);
+    return renderNc();
+  }
+  // daemon 回复前已上报会话列表，等它经 SSE 到达后再接管
+  const sid = res[1].sessionId;
+  cur.busy = 'open';
+  renderNc();
+  const has = () => machines().some((m) => m.machineId === cur.machineId && m.sessions.some((s) => s.id === sid));
+  for (const end = Date.now() + 10_000; !has() && Date.now() < end && nc === cur;) await new Promise((r) => setTimeout(r, 200));
+  if (nc !== cur) return;
+  if (!has()) {
+    cur.busy = '';
+    err(`会话已新建（#${sid}），但尚未出现在会话列表中，请稍后在列表中接管`);
+    return renderNc();
+  }
+  closeNc();
+  openTerm(cur.machineId, sid);
+}
+
+$('nc-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  submitNc();
+});
+$('nc-close').addEventListener('click', closeNc);
+$('nc-cancel').addEventListener('click', closeNc);
+document.querySelectorAll('input[name="nc-kind"]').forEach((r) => r.addEventListener('change', () => {
+  $('nc-err').textContent = '';
+  ncChanged();
+}));
+$('nc-cwd').addEventListener('change', ncChanged);
+$('nc-resume').addEventListener('change', ncChanged);
+$('nc-recent').addEventListener('change', () => {
+  const r = nc && nc.opts && nc.opts.recent[Number($('nc-recent').value)];
+  $('nc-recent').value = '';
+  if (!r) return;
+  document.querySelector(`input[name="nc-kind"][value="${r.kind === 'remote' ? 'remote' : 'local'}"]`).checked = true;
+  if (r.kind === 'remote') $('nc-host').value = r.hostId;
+  $('nc-cwd').value = r.cwd;
+  ncChanged();
+});
+$('nc').addEventListener('click', (e) => {
+  if (e.target === $('nc')) return closeNc();
+  const it = e.target.closest('[data-hid]');
+  if (it && nc) {
+    nc.pick = nc.pick === it.dataset.hid ? null : it.dataset.hid;
+    $('nc-err').textContent = '';
+    renderNc();
+  }
+});
+document.addEventListener('keydown', (e) => e.key === 'Escape' && !$('nc').hidden && closeNc());
 
 // ---- 审计日志 ----
 
@@ -863,6 +1122,7 @@ function renderAudit() {
   const desc = (a) => esc(a.event === 'image' ? `${a.mime || ''} · ${Math.max(1, Math.round((a.bytes || 0) / 1024))} KB`
     : a.to ? `${a.from} → ${a.to}${a.reason ? `：${a.reason}` : ''}`
     : a.tokenName ? `${EV[a.event] ? EV[a.event][2] : ''}「${a.tokenName}」`
+    : a.target ? `${a.target}${a.reason ? `：${a.reason === 'not_found' ? 'SSH 主机不存在' : REASON[a.reason] || a.reason}` : ''}`
     : a.reason ? REASON[a.reason] || a.reason : EV[a.event] ? EV[a.event][2] : '');
   const sess = (a) => (a.sessionId === undefined ? '<span class="muted">—</span>' : `${esc(a.sessionName || '会话')} <span class="muted">#${a.sessionId}</span>`);
   const time = (a) => fullTime(Date.parse(a.time));
@@ -1130,6 +1390,8 @@ $('m-search').addEventListener('input', renderMachines);
 document.addEventListener('click', (e) => {
   const take = e.target.closest('[data-take]');
   if (take) return openTerm(take.dataset.take, Number(take.dataset.sid));
+  const nw = e.target.closest('[data-new]');
+  if (nw) return openNc(nw.dataset.new);
   const cl = e.target.closest('[data-close]');
   if (cl) {
     closeAsk = `${cl.dataset.m}/${cl.dataset.sid}`;

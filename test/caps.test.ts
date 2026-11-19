@@ -51,7 +51,7 @@ function upload(machine: string, body: Buffer, headers: Record<string, string> =
 
 test('welcome 带 hub 能力位；hello 的 caps 存入机器状态（只保留 hub 支持的）', async () => {
   const d = await daemon('m-caps', { caps: ['image', 'future-x', 'history'] });
-  assert.deepEqual(d.messages.find((m) => m.type === 'welcome'), { type: 'welcome', proto: 2, hubVersion: HUB_VERSION, caps: ['history', 'image', 'close'] });
+  assert.deepEqual(d.messages.find((m) => m.type === 'welcome'), { type: 'welcome', proto: 2, hubVersion: HUB_VERSION, caps: ['history', 'image', 'close', 'create'] });
   assert.deepEqual(ctx.hub.agents.machines.get('m-caps')!.caps.sort(), ['history', 'image']);
   const st = await (await fetch(`${ctx.base}/api/state`, { headers: { cookie: ck } })).json();
   assert.deepEqual(st.machines.find((m: any) => m.machineId === 'm-caps').caps.sort(), ['history', 'image']);
