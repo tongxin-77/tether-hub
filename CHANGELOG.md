@@ -2,6 +2,27 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-11-19
+
+### ✨ 新增
+
+- **网页可在机器上新建会话**（需 Tether 0.5.6）
+  - 支持本地会话（可选目录）、SSH 会话（选主机）、恢复 Claude 历史对话
+  - 建好后网页直接打开该会话
+  - 需本机允许 hub 远程接管；新增接口 `GET /api/create-options`、`GET /api/claude-history`、`POST /api/session/create`，审计记录 `create` / `create_failed`
+- **手机端文本视图：可长按选择复制、可滚动长截图**
+  - 接管终端标题栏的「文本」按钮，把终端全部输出显示为普通文本
+  - 支持「复制全部」，系统滚动截屏 / 整页截图可截到完整内容
+
+### 🔧 变更
+
+- **贴图上传前自动压缩**
+  - 长边超过 2000px 的图片缩小，手机照片转为 JPEG，上传更快、不易超限
+  - 小尺寸截图 PNG 原样上传，保持文字清晰；HEIC 等格式自动转换
+- **手机贴图更方便**
+  - 「粘贴」弹层中可长按粘贴图片
+  - 「图片」键可一次选择多张，依次上传
+
 ## [0.4.0] - 2026-11-15
 
 ### 新增
@@ -48,6 +69,8 @@
 - 审计：接管的开始、结束、被拒、本地收回、断线等事件写入 `audit.jsonl`，网页可筛选查看。
 - Web 管理界面：管理员密码登录（限流），主从布局（机器列表 + 会话详情），「Claude 等待确认」醒目提醒，浅色 / 深色主题，适配手机（两级页面、全屏终端与按键条）。
 
+[0.5.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.5.0
+[0.4.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.3.0
 [0.2.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.1.0
