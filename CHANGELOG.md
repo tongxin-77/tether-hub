@@ -2,6 +2,21 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-11-23
+
+### ✨ 新增
+
+- **网页支持多语言：简体中文、English、繁體中文、日本語**
+  - 默认跟随浏览器语言；桌面端在顶栏切换，手机端在「版本与更新」面板中切换，登录页也可切换
+  - 审计日志、错误提示按所选语言显示；Tether 返回的拒绝原因同样翻译
+- **安装程序按系统语言显示**（中英繁日）
+
+### 🔧 变更
+
+- **接口错误附带错误码**
+  - 原有 `error` 文字保留，新增 `code` 与 `params`，便于按语言显示
+- **发布说明改为中英双语**
+
 ## [0.5.1] - 2026-11-19
 
 ### 🐛 修复
@@ -76,6 +91,7 @@
 - 审计：接管的开始、结束、被拒、本地收回、断线等事件写入 `audit.jsonl`，网页可筛选查看。
 - Web 管理界面：管理员密码登录（限流），主从布局（机器列表 + 会话详情），「Claude 等待确认」醒目提醒，浅色 / 深色主题，适配手机（两级页面、全屏终端与按键条）。
 
+[0.6.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.6.0
 [0.5.1]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.5.1
 [0.5.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.4.0

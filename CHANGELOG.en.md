@@ -2,6 +2,21 @@
 
 English edition of [CHANGELOG.md](CHANGELOG.md) (Simplified Chinese), kept version-for-version. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/). Versions before 0.5.0 are summarized briefly; see the Chinese changelog for full details.
 
+## [0.6.0] - 2026-11-23
+
+### ✨ Added
+
+- **Multi-language web UI: Simplified Chinese, English, Traditional Chinese and Japanese**
+  - Follows the browser language by default; switch it from the top bar on desktop, the “Version & updates” panel on phones, or the sign-in page
+  - The audit log and error messages use the selected language, including rejection reasons returned by Tether
+- **The installer follows the system language** (Chinese, English, Traditional Chinese, Japanese)
+
+### 🔧 Changed
+
+- **API errors include an error code**
+  - The existing `error` text is kept; new `code` and `params` fields allow localized display
+- **Release notes are now bilingual (Chinese and English)**
+
 ## [0.5.1] - 2026-11-19
 
 ### 🐛 Fixed
@@ -60,6 +75,7 @@ First release, for Tether 0.4.0 and later (daemon ↔ hub protocol v2).
 
 - Machine connections with per-machine tokens, a live session overview, remote takeover in the browser, an audit log, and a web admin UI with light / dark themes and a mobile layout.
 
+[0.6.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.6.0
 [0.5.1]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.5.1
 [0.5.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tongxin-77/tether-hub/releases/tag/v0.4.0
