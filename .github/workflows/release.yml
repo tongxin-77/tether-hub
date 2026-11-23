@@ -161,13 +161,22 @@ jobs:
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
-      - name: 上传到 Release（不存在则创建，说明取自 CHANGELOG）
+      # 说明为中英双语：CHANGELOG.md（简体）与 CHANGELOG.en.md（英文）各取该版本段，以 <!-- lang:zh-CN --> / <!-- lang:en -->
+      # 标记分段拼接（GitHub 上标记不可见，两段间以分隔线隔开）；hub 网页更新面板按界面语言只显示其中一段
+      - name: 上传到 Release（不存在则创建，说明取自 CHANGELOG.md 与 CHANGELOG.en.md）
         run: |
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" assets/* --clobber
           else
-            awk -v h="## [${TAG#v}]" 'index($0, h) == 1 { f = 1; next } f && /^## \[/ { exit } f' CHANGELOG.md \
-              | sed -e '/./,$!d' > notes.md
-            if [ ! -s notes.md ]; then echo "CHANGELOG.md 中没有 ${TAG#v} 的版本段" >&2; exit 1; fi
+            # 取版本段：去掉开头空行与末尾空行
+            section() {
+              awk -v h="## [${TAG#v}]" 'index($0, h) == 1 { f = 1; next } f && /^## \[/ { exit } f' "$1" \
+                | sed -e '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
+            }
+            section CHANGELOG.md > zh.md
+            section CHANGELOG.en.md > en.md
+            if [ ! -s zh.md ]; then echo "CHANGELOG.md 中没有 ${TAG#v} 的版本段" >&2; exit 1; fi
+            if [ ! -s en.md ]; then echo "CHANGELOG.en.md 中没有 ${TAG#v} 的版本段" >&2; exit 1; fi
+            { echo '<!-- lang:zh-CN -->'; cat zh.md; printf '\n---\n\n'; echo '<!-- lang:en -->'; cat en.md; } > notes.md
             gh release create "$TAG" assets/* --title "$TAG" --notes-file notes.md --verify-tag
           fi

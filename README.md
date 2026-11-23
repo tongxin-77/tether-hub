@@ -7,7 +7,7 @@
 - **默认不传终端内容**：平时只上报会话元信息；网页点「接管」后才推送该会话的画面，hub 只转发、不存储。
 - **单用户、自托管**：Node.js + TypeScript，运行时依赖仅 `ws` 与 xterm.js（由 hub 本地提供，不用 CDN）。
 
-需配合 Tether 0.4.0 及以上（协议 v2）。文档：[需求](docs/requirements.md) · [协议](docs/protocol.md) · [实现细节](docs/internals.md) · [更新日志](CHANGELOG.md)
+需配合 Tether 0.4.0 及以上（协议 v2）。文档：[需求](docs/requirements.md) · [协议](docs/protocol.md) · [实现细节](docs/internals.md) · [更新日志](CHANGELOG.md)（[English](CHANGELOG.en.md)）
 
 ## 安装包（Windows）
 

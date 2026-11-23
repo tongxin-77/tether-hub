@@ -38,7 +38,7 @@
 
 ### 网页关闭会话
 
-机器详情中运行中的会话旁有「关闭」按钮，页内二次确认后调用 `POST /api/session/close?machine=<machineId>&session=<sessionId>`（需登录且同源）：成功 200 `{"ok":true}`，该会话随后从 Tether 上报的会话列表中消失；正在查看该会话终端的浏览器关闭终端页，回到机器页并提示「会话「名称」已关闭」；机器离线或 Tether 无 `close` 能力 409；daemon 回 `ok:false` 时 422 `{"error":"…","reason":"disabled|not_found"}`；10 s 未回复 504；等待中断线 409。无 `close` 能力或离线时按钮置灰并说明原因；hub 不知道本机是否允许接管，未允许时由 422 的原因提示。实现见 `Web.closeSession` 与 `Agents.closeSession`。
+机器详情中运行中的会话旁有「关闭」按钮，页内二次确认后调用 `POST /api/session/close?machine=<machineId>&session=<sessionId>`（需登录且同源）：成功 200 `{"ok":true}`，该会话随后从 Tether 上报的会话列表中消失；正在查看该会话终端的浏览器关闭终端页，回到机器页并提示「会话「名称」已关闭」；机器离线或 Tether 无 `close` 能力 409；daemon 回 `ok:false` 时 422 `{"error":"…","code":"close_rejected","reason":"disabled|not_found"}`；10 s 未回复 504；等待中断线 409。无 `close` 能力或离线时按钮置灰并说明原因；hub 不知道本机是否允许接管，未允许时由 422 的原因提示。实现见 `Web.closeSession` 与 `Agents.closeSession`。
 
 ### 网页新建会话
 
@@ -48,7 +48,7 @@
 - `GET /api/claude-history?machine=<machineId>&cwd=<目录>` → 200 `{"items":[…]}`；`cwd` 必填（网页留空时传 `home`）。
 - `POST /api/session/create?machine=<machineId>`，JSON 请求体 `{"target":{…},"resume"?:{…},"cols"?:n,"rows"?:n}`（格式见协议第 8.5 节；只转发已知字段，`resume` 仅 `local`）→ 200 `{"sessionId":7}`。
 
-错误码与关闭会话一致：参数 / 请求体错误 400、非 JSON 415、机器离线或无 `create` 能力 409、daemon 回 `ok:false` 时 422 `{"error":"…","reason":"…"}`、超时 504（10 s / 10 s / 30 s）、等待中断线 409。新建成功后网页等该会话经 SSE 出现在列表中（最多 10 s）再直接打开终端接管。实现见 `Web.createSession` 等与 `Agents.createSession` / `createOptions` / `claudeHistory`。
+错误码与关闭会话一致：参数 / 请求体错误 400、非 JSON 415、机器离线或无 `create` 能力 409、daemon 回 `ok:false` 时 422 `{"error":"…","code":"create_rejected","reason":"…","detail"?:"daemon 附带的说明"}`、超时 504（10 s / 10 s / 30 s）、等待中断线 409。新建成功后网页等该会话经 SSE 出现在列表中（最多 10 s）再直接打开终端接管。实现见 `Web.createSession` 等与 `Agents.createSession` / `createOptions` / `claudeHistory`。
 
 ### 贴图接口
 
@@ -62,7 +62,7 @@
 | 413 | 超过 10 MB（先看 `Content-Length`，再边读边限） |
 | 415 | `Content-Type` 不是 `image/png`、`image/jpeg`、`image/gif`、`image/webp` |
 | 409 | 机器离线、该机器 Tether 无 `image` 能力（需 0.5.0+）、该会话没有生效的接管，或等待期间接管结束 / 断线 |
-| 422 `{"error":"…","reason":"…"}` | daemon 回 `imageFailed`，`reason` 见协议 8.3，`error` 为中文说明 |
+| 422 `{"error":"…","code":"image_rejected","reason":"…"}` | daemon 回 `imageFailed`，`reason` 见协议 8.3，`error` 为中文说明 |
 | 504 | 60 s 内 daemon 未回复 |
 
 hub 按 256 KB 分块发 `imageChunk`，每块等写入 socket，WebSocket 发送缓冲超过 1 MB 时暂停，避免大图拖慢同一连接上的终端输出。
@@ -118,7 +118,7 @@ hub 按 256 KB 分块发 `imageChunk`，每块等写入 socket，WebSocket 发�
 发布（`.github/workflows/release.yml`，推送 `v*` tag 触发）：
 
 - `windows` job（`windows-2025`）：校验 tag 与 `package.json` 版本一致 → `pnpm install --frozen-lockfile`、`build`、`test` → 安装固定版本的 Inno Setup（校验 SHA256）→ `pnpm package win-x64` → 冒烟测试：静默安装（明文、端口 8443）、等待服务启动、curl 首页与登录、token 命令行；不带参数再装一次验证升级保留配置；静默卸载并确认服务与防火墙规则已删除、配置保留 → 上传 zip 与 setup.exe 为 artifact。
-- `release` job：汇总各平台 artifact，生成 `SHA256SUMS`；Release 已存在则上传 / 覆盖资产，不存在则以 `CHANGELOG.md` 中该版本段为说明创建。
+- `release` job：汇总各平台 artifact，生成 `SHA256SUMS`；Release 已存在则上传 / 覆盖资产，不存在则以 `CHANGELOG.md` 与 `CHANGELOG.en.md` 中该版本段（以 `<!-- lang:zh-CN -->` / `<!-- lang:en -->` 标记拼接的中英双语）为说明创建；网页更新面板按界面语言选段显示。
 - 以后加 linux-x64：在 `scripts/package.ts` 的平台表中加一项（Node 的 `linux-x64.tar.xz`、systemd 单元等），新增一个构建 job 调用 `pnpm package linux-x64` 并加入 `release` 的 `needs`；`Updater` 对非 `win-` 平台已按 `.tar.gz` 处理。
 
 ## 机器 token 管理
@@ -147,3 +147,10 @@ hub 按协议第 7 节把接管事件追加到 `HUB_DATA_DIR/audit.jsonl`：`sta
 - 单条消息上限：`/agent` 4 MB（`attached` 可带历史），浏览器 `/api/term` 1 MB，超出以 1009 关闭；贴图上传请求体上限 10 MB；连接后 10 s 内未收到合法 hello 以 `bad_hello`（4003）关闭。
 - hub 每 25 s 发送 ping，一个周期内未收到 pong 的连接被断开。
 - Web API 与终端 WebSocket 全部要求登录，终端 WebSocket 另校验 Origin 同源；页面带 CSP（只允许同源脚本；xterm.js 运行时会插入 `<style>`，样式允许 inline）。
+
+## 界面国际化
+
+- 网页：`public/locales.js`（zh-CN / en / zh-TW / ja 词条，zh-CN 为源语言）+ `public/i18n.js`（语言解析、`t()`、`pickNotes()`）。语言存 `localStorage` 的 `tether.hub.locale`（`auto` 按 `navigator.languages`：zh-Hant / 港澳台 → zh-TW，其余中文 → zh-CN，ja → ja，其他一律 en；缺键按 en → zh-CN 回退）。`test/i18n.test.ts` 检查各语言键集合、占位符一致与引用的键存在。
+- API 错误：JSON 错误体为 `{"error":"中文原文","code":"…","params"?:{…}}`，daemon 拒绝时另带 `reason` 与 `detail`；网页按 `err.<code>` / `rej.<code>.<reason>` 翻译，未知 reason 才显示 `detail`，没有 code 时显示 `error` 原文。更新状态另有 `errorCode` / `errorParams`（词条 `upd.err.<errorCode>`）。
+- 审计日志仍只存事件码与原始字段，网页按当前语言渲染；命令行（`pnpm token`、`tether-hub-token.cmd`）与服务端日志保持中文。
+- 安装器（Inno Setup）含简体、英文、繁体、日文，按 Windows 界面语言自动选择。

@@ -98,12 +98,16 @@ export function updateData(dir: string, fn: (d: HubData) => void): HubData {
 
 const NAME_RE = /^[^\s\x00-\x1f]{1,64}$/u;
 
+/** 名称非法 / 重复等业务错误：message 为中文原文（命令行输出），errCode / params 供网页按语言显示 */
+const nameError = (message: string, errCode: string, name?: string) =>
+  Object.assign(new Error(message), { errCode, params: name === undefined ? {} : { name } });
+
 /** 签发 token，返回明文（只此一次） */
 export function createToken(dir: string, name: string): string {
-  if (!NAME_RE.test(name)) throw new Error('名称须为 1~64 个非空白字符');
+  if (!NAME_RE.test(name)) throw nameError('名称须为 1~64 个非空白字符', 'token_name_invalid');
   const token = 'th_' + randomBytes(32).toString('base64url');
   updateData(dir, (d) => {
-    if (d.tokens.some((t) => t.name === name)) throw new Error(`名称「${name}」已存在（含已吊销的），请换一个`);
+    if (d.tokens.some((t) => t.name === name)) throw nameError(`名称「${name}」已存在（含已吊销的），请换一个`, 'token_exists', name);
     d.tokens.push({ name, sha256: hashToken(token), createdAt: Date.now(), revoked: false });
   });
   return token;
@@ -112,8 +116,8 @@ export function createToken(dir: string, name: string): string {
 export function revokeToken(dir: string, name: string) {
   updateData(dir, (d) => {
     const t = d.tokens.find((t) => t.name === name);
-    if (!t) throw new Error(`没有名为「${name}」的 token`);
-    if (t.revoked) throw new Error(`token「${name}」已经吊销过了`);
+    if (!t) throw nameError(`没有名为「${name}」的 token`, 'token_not_found', name);
+    if (t.revoked) throw nameError(`token「${name}」已经吊销过了`, 'token_already_revoked', name);
     t.revoked = true;
   });
 }

@@ -24,7 +24,7 @@ const IMAGE_TIMEOUT = 60_000;
 const IMAGE_BUFFERED = 1024 * 1024;
 /** 网页关闭会话：等待 daemon 回 closeResult 的默认超时 */
 const CLOSE_TIMEOUT = 10_000;
-/** closeResult 失败原因 → 中文说明 */
+/** closeResult 失败原因 → 中文说明（API 的 error 字段与日志；网页按 code + reason 自行翻译） */
 const CLOSE_REASON: Record<string, string> = {
   disabled: '本机未允许 hub 远程接管（关闭会话复用该开关）',
   not_found: '会话不存在或已退出',
@@ -32,14 +32,14 @@ const CLOSE_REASON: Record<string, string> = {
 /** 网页新建会话：取选项 / 列 Claude 历史对话、新建的默认超时（远程连接较慢） */
 const QUERY_TIMEOUT = 10_000;
 const CREATE_TIMEOUT = 30_000;
-/** createOptionsResult / claudeHistoryResult / createResult 失败原因 → 中文说明 */
+/** createOptionsResult / claudeHistoryResult / createResult 失败原因 → 中文说明（同上） */
 const CREATE_REASON: Record<string, string> = {
   disabled: '本机未允许 hub 远程接管（新建会话复用该开关）',
   not_found: 'SSH 主机不存在',
   auth_required: 'SSH 需要输入密码或确认主机指纹',
   error: '本机操作失败',
 };
-/** daemon 回 imageFailed 的原因 → 中文说明 */
+/** daemon 回 imageFailed 的原因 → 中文说明（同上） */
 const IMAGE_REASON: Record<string, string> = {
   disabled: '本机未允许接管',
   not_taken_over: '该会话未被 hub 接管',
@@ -116,7 +116,7 @@ interface Upload {
 }
 
 /** uploadImage 的结果：成功为保存路径；失败附 HTTP 状态码与中文原因 */
-export type ImageResult = { ok: true; path: string } | { ok: false; status: number; error: string; reason?: string };
+export type ImageResult = { ok: true; path: string } | Failure;
 
 interface Conn {
   ws: WebSocket;
@@ -135,7 +135,7 @@ interface Conn {
 }
 
 /** 网页关闭会话的结果：成功，或附 HTTP 状态码与中文原因 */
-export type CloseResult = { ok: true } | { ok: false; status: number; error: string; reason?: string };
+export type CloseResult = { ok: true } | Failure;
 
 interface Closing {
   sessionId: number;
@@ -144,7 +144,8 @@ interface Closing {
 }
 
 /** create 能力请求的失败：附 HTTP 状态码与中文原因（reason 为 daemon 回的原因） */
-export type Failure = { ok: false; status: number; error: string; reason?: string };
+/** 失败：error 为中文说明（兼容字段），code 为网页翻译用的错误码；daemon 拒绝时带 reason 与 daemon 附带的 detail */
+export type Failure = { ok: false; status: number; error: string; code: string; reason?: string; detail?: string };
 type Reply = { ok: true; msg: Record<string, unknown> } | Failure;
 
 interface Pending {
@@ -303,7 +304,7 @@ export class Agents extends EventEmitter {
         if (!c || c.sessionId !== msg.sessionId) return;
         if (msg.ok === true) return c.done({ ok: true });
         const reason = String(msg.reason);
-        return c.done({ ok: false, status: 422, error: CLOSE_REASON[reason] ?? `关闭失败（${reason}）`, reason }, reason);
+        return c.done({ ok: false, status: 422, error: CLOSE_REASON[reason] ?? `关闭失败（${reason}）`, code: 'close_rejected', reason }, reason);
       }
       if (typeof msg.requestId === 'string' && conn.requests.get(msg.requestId)?.result === msg.type) {
         const p = conn.requests.get(msg.requestId)!;
@@ -312,14 +313,14 @@ export class Agents extends EventEmitter {
         // daemon 附的 message（如 auth_required 的可读说明）接在原因后面；disabled 的说明与原因重复，不接
         const detail = reason !== 'disabled' && typeof msg.message === 'string' ? msg.message.slice(0, 500) : '';
         const text = CREATE_REASON[reason] ?? `操作失败（${reason}）`;
-        return p.done({ ok: false, status: 422, error: detail ? `${text}：${detail}` : text, reason }, reason);
+        return p.done({ ok: false, status: 422, error: detail ? `${text}：${detail}` : text, code: 'create_rejected', reason, ...(detail ? { detail } : {}) }, reason);
       }
       if ((msg.type === 'imageSaved' || msg.type === 'imageFailed') && typeof msg.uploadId === 'string') {
         const u = conn.uploads.get(msg.uploadId);
         if (!u || u.sessionId !== msg.sessionId) return;
         if (msg.type === 'imageSaved' && typeof msg.path === 'string') return u.done({ ok: true, path: msg.path });
         const reason = String(msg.reason);
-        return u.done({ ok: false, status: 422, error: IMAGE_REASON[reason] ?? `贴图失败（${reason}）`, reason }, reason);
+        return u.done({ ok: false, status: 422, error: IMAGE_REASON[reason] ?? `贴图失败（${reason}）`, code: 'image_rejected', reason }, reason);
       }
       const t = typeof msg.sessionId === 'number' ? conn.takeovers.get(msg.sessionId) : undefined;
       if (!t) return;
@@ -440,8 +441,8 @@ export class Agents extends EventEmitter {
       if (t.active) this.audit(conn, t.sessionId, 'disconnected');
     }
     this.failUploads(conn);
-    for (const c of [...conn.closes.values()]) c.done({ ok: false, status: 409, error: '机器已断开' }, 'disconnected');
-    for (const p of [...conn.requests.values()]) p.done({ ok: false, status: 409, error: '机器已断开' }, 'disconnected');
+    for (const c of [...conn.closes.values()]) c.done({ ok: false, status: 409, error: '机器已断开', code: 'machine_disconnected' }, 'disconnected');
+    for (const p of [...conn.requests.values()]) p.done({ ok: false, status: 409, error: '机器已断开', code: 'machine_disconnected' }, 'disconnected');
   }
 
   /**
@@ -450,9 +451,9 @@ export class Agents extends EventEmitter {
    */
   async uploadImage(machineId: string, sessionId: number, mime: string, data: Buffer, ip: string): Promise<ImageResult> {
     const conn = this.conns.get(machineId);
-    if (!conn) return { ok: false, status: 409, error: '机器离线' };
-    if (!conn.caps.has('image')) return { ok: false, status: 409, error: '该机器的 Tether 不支持贴图（需 Tether 0.5.0+）' };
-    if (!conn.takeovers.get(sessionId)?.active) return { ok: false, status: 409, error: '该会话没有生效的接管' };
+    if (!conn) return { ok: false, status: 409, error: '机器离线', code: 'machine_offline' };
+    if (!conn.caps.has('image')) return { ok: false, status: 409, error: '该机器的 Tether 不支持贴图（需 Tether 0.5.0+）', code: 'image_unsupported' };
+    if (!conn.takeovers.get(sessionId)?.active) return { ok: false, status: 409, error: '该会话没有生效的接管', code: 'no_takeover' };
 
     const uploadId = randomUUID();
     let settled = false;
@@ -469,7 +470,7 @@ export class Agents extends EventEmitter {
           resolve(r);
         },
       };
-      u.timer = setTimeout(() => u.done({ ok: false, status: 504, error: '等待本机保存图片超时' }, 'timeout'), this.opt.imageTimeoutMs ?? IMAGE_TIMEOUT);
+      u.timer = setTimeout(() => u.done({ ok: false, status: 504, error: '等待本机保存图片超时', code: 'image_timeout' }, 'timeout'), this.opt.imageTimeoutMs ?? IMAGE_TIMEOUT);
       conn.uploads.set(uploadId, u);
     });
 
@@ -490,8 +491,8 @@ export class Agents extends EventEmitter {
    */
   closeSession(machineId: string, sessionId: number, ip: string): Promise<CloseResult> {
     const conn = this.conns.get(machineId);
-    if (!conn) return Promise.resolve({ ok: false, status: 409, error: '机器离线' });
-    if (!conn.caps.has('close')) return Promise.resolve({ ok: false, status: 409, error: '该机器的 Tether 不支持网页关闭会话（需 Tether 0.5.0+）' });
+    if (!conn) return Promise.resolve({ ok: false, status: 409, error: '机器离线', code: 'machine_offline' });
+    if (!conn.caps.has('close')) return Promise.resolve({ ok: false, status: 409, error: '该机器的 Tether 不支持网页关闭会话（需 Tether 0.5.0+）', code: 'close_unsupported' });
     const requestId = randomUUID();
     // 会话名称在发出前记下：成功后会话可能很快从列表中移除
     const sessionName = this.machines.get(machineId)?.sessions.find((s) => s.id === sessionId)?.name ?? '';
@@ -508,7 +509,7 @@ export class Agents extends EventEmitter {
         },
       };
       conn.closes.set(requestId, c);
-      timer = setTimeout(() => c.done({ ok: false, status: 504, error: '等待本机关闭会话超时' }, 'timeout'), this.opt.closeTimeoutMs ?? CLOSE_TIMEOUT);
+      timer = setTimeout(() => c.done({ ok: false, status: 504, error: '等待本机关闭会话超时', code: 'close_timeout' }, 'timeout'), this.opt.closeTimeoutMs ?? CLOSE_TIMEOUT);
       send(conn.ws, { type: 'close', sessionId, requestId });
     });
   }
@@ -555,15 +556,15 @@ export class Agents extends EventEmitter {
     });
     if (!r.ok) return r;
     const id = r.msg.sessionId;
-    if (!Number.isInteger(id) || (id as number) < 0) return { ok: false, status: 502, error: '本机回复格式错误' };
+    if (!Number.isInteger(id) || (id as number) < 0) return { ok: false, status: 502, error: '本机回复格式错误', code: 'bad_reply' };
     return { ok: true, sessionId: id as number };
   }
 
   /** create 能力请求的前置检查：机器在线且双方都有 create 能力 */
   private createConn(machineId: string): Conn | Failure {
     const conn = this.conns.get(machineId);
-    if (!conn) return { ok: false, status: 409, error: '机器离线' };
-    if (!conn.caps.has('create')) return { ok: false, status: 409, error: '该机器的 Tether 不支持网页新建会话（请更新 Tether）' };
+    if (!conn) return { ok: false, status: 409, error: '机器离线', code: 'machine_offline' };
+    if (!conn.caps.has('create')) return { ok: false, status: 409, error: '该机器的 Tether 不支持网页新建会话（请更新 Tether）', code: 'create_unsupported' };
     return conn;
   }
 
@@ -583,7 +584,7 @@ export class Agents extends EventEmitter {
         },
       };
       conn.requests.set(requestId, p);
-      timer = setTimeout(() => p.done({ ok: false, status: 504, error: '等待本机回复超时' }, 'timeout'), timeoutMs);
+      timer = setTimeout(() => p.done({ ok: false, status: 504, error: '等待本机回复超时', code: 'reply_timeout' }, 'timeout'), timeoutMs);
       send(conn.ws, { ...msg, requestId });
     });
   }
@@ -591,7 +592,7 @@ export class Agents extends EventEmitter {
   /** 接管结束 / 断线：结束该会话（不指定则该连接全部）挂起的贴图 */
   private failUploads(conn: Conn, sessionId?: number) {
     for (const u of [...conn.uploads.values()]) {
-      if (sessionId === undefined || u.sessionId === sessionId) u.done({ ok: false, status: 409, error: '接管已结束' }, 'ended');
+      if (sessionId === undefined || u.sessionId === sessionId) u.done({ ok: false, status: 409, error: '接管已结束', code: 'takeover_ended' }, 'ended');
     }
   }
 

@@ -49,7 +49,9 @@ test('未登录 401、跨源 403、离线 / 无 create 能力 409（不向 daemo
     await create('m-nocreate', { target: { kind: 'local' } }),
   ]) {
     assert.equal(r.status, 409);
-    assert.match((await r.json()).error, /不支持网页新建会话/);
+    const b = await r.json();
+    assert.match(b.error, /不支持网页新建会话/);
+    assert.equal(b.code, 'create_unsupported');
   }
   assert.equal(d.messages.filter((m) => ['createOptions', 'claudeHistory', 'create'].includes(m.type)).length, 0);
   d.ws.close();
@@ -118,7 +120,8 @@ test('claudeHistory：带 cwd 往返；ok:false 422 + 中文原因（附 message
   d.send({ type: 'claudeHistoryResult', requestId: all(d, 'claudeHistory')[1].requestId, ok: false, reason: 'error', message: '读取失败' });
   const r2 = await res2;
   assert.equal(r2.status, 422);
-  assert.deepEqual(await r2.json(), { error: '本机操作失败：读取失败', reason: 'error' });
+  // error 保留中文原文；code + reason 供网页翻译，daemon 的说明另放 detail
+  assert.deepEqual(await r2.json(), { error: '本机操作失败：读取失败', code: 'create_rejected', reason: 'error', detail: '读取失败' });
 
   assert.equal((await get('/api/create-options?machine=m-hist')).status, 504);
   d.ws.close();
@@ -174,14 +177,17 @@ test('create：ok:false 422（auth_required 附 message / disabled / not_found�
   const b1 = await r1.json();
   assert.equal(b1.reason, 'auth_required');
   assert.match(b1.error, /需要密码，请先在桌面端连接一次或配置密钥/);
+  assert.equal(b1.detail, '需要密码，请先在桌面端连接一次或配置密钥');
   const r2 = await reply({ target: { kind: 'local' } }, { ok: false, reason: 'disabled' });
-  assert.deepEqual(await r2.json(), { error: '本机未允许 hub 远程接管（新建会话复用该开关）', reason: 'disabled' });
+  assert.deepEqual(await r2.json(), { error: '本机未允许 hub 远程接管（新建会话复用该开关）', code: 'create_rejected', reason: 'disabled' });
   const r3 = await reply({ target: { kind: 'remote', hostId: 'gone' } }, { ok: false, reason: 'not_found' });
   assert.match((await r3.json()).error, /主机不存在/);
   const r4 = await reply({ target: { kind: 'local' } }, { ok: false, reason: 'weird' });
   assert.equal((await r4.json()).error, '操作失败（weird）');
 
-  assert.equal((await create('m-cf', { target: { kind: 'local' } })).status, 504);
+  const r5 = await create('m-cf', { target: { kind: 'local' } });
+  assert.equal(r5.status, 504);
+  assert.equal((await r5.json()).code, 'reply_timeout');
 
   const n = all(d, 'create').length;
   const res = create('m-cf', { target: { kind: 'local' } });

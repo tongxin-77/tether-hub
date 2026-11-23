@@ -29,10 +29,10 @@ function hasAlpha(ctx, w, h) {
 
 function canvasBlob(cv, type) {
   if (cv.convertToBlob) return cv.convertToBlob({ type, quality: 0.85 });
-  return new Promise((ok, fail) => cv.toBlob((b) => (b ? ok(b) : fail(new Error('编码失败'))), type, 0.85));
+  return new Promise((ok, fail) => cv.toBlob((b) => (b ? ok(b) : fail(Object.assign(new Error('编码失败'), { code: 'encode_failed' }))), type, 0.85));
 }
 
-/** 解码（按 EXIF 方向）→ 必要时缩放 / 重编码；失败时原图合规则回退原图，否则抛出「不支持的图片格式」 */
+/** 解码（按 EXIF 方向）→ 必要时缩放 / 重编码；失败时原图合规则回退原图，否则抛出「不支持的图片格式」（code: unsupported） */
 async function prepareImage(blob) {
   const ok = IMG_TYPES.includes(blob.type);
   if (blob.type === 'image/gif') return blob;
@@ -55,7 +55,7 @@ async function prepareImage(blob) {
     return ok && !scaled && out.size >= blob.size ? blob : out; // 重编码反而更大时用原图
   } catch {
     if (ok) return blob;
-    throw new Error('不支持的图片格式');
+    throw Object.assign(new Error('不支持的图片格式'), { code: 'unsupported' }); // code 供 app.js 按语言显示
   } finally {
     if (bmp) bmp.close();
   }

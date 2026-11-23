@@ -22,9 +22,14 @@ test('登录限流：连续失败 5 次后锁定，正确密码也返回 429', a
   for (let i = 1; i <= 4; i++) assert.equal((await login(ctx.base, 'wrong')).status, 401);
   const fifth = await login(ctx.base, 'wrong');
   assert.equal(fifth.status, 401);
-  assert.match((await fifth.json()).error, /锁定/);
+  const fb = await fifth.json();
+  assert.match(fb.error, /锁定/);
+  assert.equal(fb.code, 'login_locked');
   const locked = await login(ctx.base, PASSWORD);
   assert.equal(locked.status, 429);
+  const lb = await locked.json();
+  assert.equal(lb.code, 'login_throttled');
+  assert.ok(lb.params.minutes >= 1);
   assert.ok(Number(locked.headers.get('retry-after')) > 0);
 });
 

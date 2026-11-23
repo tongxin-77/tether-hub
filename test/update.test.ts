@@ -72,6 +72,8 @@ test('检查更新：有新版本 / 已最新 / 预发布 / 限流 / 网络错�
   s = u.status();
   assert.equal(s.state, 'available');
   assert.match(s.error!, /限流/);
+  assert.equal(s.errorCode, 'check.rate_limited');
+  assert.deepEqual(s.errorParams, { status: 403 });
 
   release = rel('v0.1.0');
   await u.check();
@@ -82,11 +84,14 @@ test('检查更新：有新版本 / 已最新 / 预发布 / 限流 / 网络错�
   await u.check();
   assert.equal(u.status().state, 'idle');
   assert.match(u.status().error!, /无法识别/);
+  assert.equal(u.status().errorCode, 'check.bad_tag');
 
   const down = updater({ api: 'http://127.0.0.1:1/x' }).u;
   await down.check();
   assert.equal(down.status().state, 'idle');
   assert.match(down.status().error!, /检查更新失败/);
+  assert.equal(down.status().errorCode, 'check');
+  assert.ok(down.status().errorParams?.msg);
 });
 
 test('更新接口：需登录、POST 校验同源、无新版本时拒绝 apply，状态经 SSE 推送', async () => {
@@ -207,6 +212,7 @@ test('apply 失败：回滚覆盖与新增的文件、恢复 dist，按旧 lockf
     const s = u.status();
     assert.equal(s.state, 'failed');
     assert.match(s.error!, /pnpm build 失败/);
+    assert.equal(s.errorCode, 'apply');
     assert.match(s.log!, /error TS2304/);
     assert.match(s.log!, /已回滚/);
     assert.equal(read(path.join(fx.dir, 'package.json')), 'old');
@@ -276,6 +282,7 @@ test('安装版检查更新：需要本平台更新包与 SHA256SUMS 资产', as
     assert.equal(u.status().state, 'available');
     assert.ok(!u.canApply);
     assert.match(u.status().error!, /未提供更新包/);
+    assert.equal(u.status().errorCode, 'no_package');
 
     release = rel('v0.2.0', { assets: fx.assets });
     await u.check();
@@ -322,6 +329,7 @@ test('安装版 apply：SHA256 不匹配时不动安装目录', async () => {
     await u.apply();
     assert.equal(u.status().state, 'failed');
     assert.match(u.status().error!, /SHA256 不匹配/);
+    assert.equal(u.status().errorCode, 'apply.sha_mismatch');
     assert.equal(read(path.join(fx.dir, 'node.exe')), 'old');
     assert.ok(!fs.existsSync(path.join(fx.dir, '.update')));
     assert.equal(restarted(), 0);

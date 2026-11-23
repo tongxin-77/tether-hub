@@ -53,7 +53,10 @@ test('签发返回明文，列表不含 sha256；名称重复 / 非法返回 400
 
   const dup = await api('/api/tokens', { method: 'POST', body: { name: 'web-pc' } });
   assert.equal(dup.status, 400);
-  assert.match((await dup.json()).error, /已存在/);
+  const db = await dup.json();
+  assert.match(db.error, /已存在/);
+  assert.equal(db.code, 'token_exists');
+  assert.deepEqual(db.params, { name: 'web-pc' });
   for (const name of ['', 'a b', 'x'.repeat(65), 1]) {
     assert.equal((await api('/api/tokens', { method: 'POST', body: { name } })).status, 400, String(name));
   }
@@ -78,7 +81,9 @@ test('网页吊销：状态变化、断开使用它的机器、重复吊销 409�
 
   const again = await api(path, { method: 'POST' });
   assert.equal(again.status, 409);
-  assert.match((await again.json()).error, /已经吊销/);
+  const ab = await again.json();
+  assert.match(ab.error, /已经吊销/);
+  assert.equal(ab.code, 'token_already_revoked');
   assert.equal((await api('/api/tokens/nope/revoke', { method: 'POST' })).status, 404);
 
   const recs = readAudit(ctx.dir, 100) as any[];

@@ -121,6 +121,13 @@ a{color:var(--primary);text-decoration:none}
 .upd-btn{position:relative;font-size:12px;color:var(--text-3)}
 .upd-btn.new{background:var(--primary-soft);color:var(--pri-ink);border-radius:999px;font-weight:500}
 .upd-btn.new:hover{background:var(--primary-soft);color:var(--primary-hover)}
+/* 语言切换：透明的原生 select 覆盖整个控件，点开即系统选择器（手机上为原生列表） */
+.lang-pick{position:relative;cursor:pointer}
+.lang-sel{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:16px;border:0}
+.lang-btn{font-size:12px;color:var(--text-3)}
+.lang-inline{white-space:nowrap;font-size:12px;color:var(--text-3)}
+.lang-inline .ic{vertical-align:-3px;margin-right:4px}
+.login-foot .lang-inline{display:block;width:max-content;margin-top:10px}
 
 /* 版本与更新面板 */
 .modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:16px;background:rgba(30,22,15,.32)}
@@ -330,6 +337,7 @@ html.tv-on .tv{display:block}
   .modal-card{max-width:none;max-height:92%;border-radius:16px 16px 0 0;padding-bottom:env(safe-area-inset-bottom)}
   .modal-card .card-head{padding:10px 4px 2px 16px}
   .modal-x{width:44px;height:44px}
+  .card-head .lang-inline{padding:12px 6px}
   .modal-card .card-body{padding:8px 16px 16px}
   .modal .desc{grid-template-columns:repeat(3,1fr);gap:10px}
   .upd-acts .btn{flex:1;height:44px}

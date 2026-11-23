@@ -19,6 +19,10 @@ const ZH_ISL = {
   url: 'https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_3/Files/Languages/Unofficial/ChineseSimplified.isl',
   sha256: '7d544b9bb1d142cfa11f2e5d3cc8abe2e55f8e066c5124e3772675aa236e1278',
 };
+const TW_ISL = {
+  url: 'https://raw.githubusercontent.com/jrsoftware/issrc/is-6_7_3/Files/Languages/Unofficial/ChineseTraditional.isl',
+  sha256: 'ab22b0ebf82969d1c9a7208e0e9f60e5119c0c95b9dacc00eb8e5582c7d3c604',
+};
 
 /**
  * 平台参数。nodeSha256 取自 https://nodejs.org/dist/v<NODE_VERSION>/SHASUMS256.txt。
@@ -75,8 +79,9 @@ if (platform.startsWith('win-')) {
   else {
     const winsw = await fetchVerified(WINSW.url, WINSW.sha256, 'WinSW-x64-2.12.0.exe');
     const isl = await fetchVerified(ZH_ISL.url, ZH_ISL.sha256, 'ChineseSimplified-6.7.3.isl');
+    const twIsl = await fetchVerified(TW_ISL.url, TW_ISL.sha256, 'ChineseTraditional-6.7.3.isl');
     run(iscc, [
-      '/Q', `/DAppVersion=${version}`, `/DPayloadDir=${stage}`, `/DWinSW=${winsw}`, `/DZhIsl=${isl}`,
+      '/Q', `/DAppVersion=${version}`, `/DPayloadDir=${stage}`, `/DWinSW=${winsw}`, `/DZhIsl=${isl}`, `/DTwIsl=${twIsl}`,
       `/DOutputDir=${out}`, `/DOutputBaseFilename=${name}-setup`, path.join(root, 'packaging', 'windows', 'tether-hub.iss'),
     ], root);
   }

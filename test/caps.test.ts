@@ -108,7 +108,7 @@ test('贴图接口：未登录 401、跨源 403、类型 415、过大 413、无�
   assert.equal((await upload('m-x', png, { origin: 'http://evil.example' })).status, 403);
   const r415 = await upload('m-x', png, { 'content-type': 'text/plain' });
   assert.equal(r415.status, 415);
-  assert.match((await r415.json()).error, /PNG/);
+  assert.deepEqual(await r415.json(), { error: '仅支持 PNG / JPEG / GIF / WebP 图片', code: 'image_type' });
   assert.equal((await upload('m-x', Buffer.alloc(10 * 1024 * 1024 + 1))).status, 413);
 
   // 不带 Content-Length（分块传输）时边读边限
@@ -271,6 +271,7 @@ test('关闭会话：ok:false → 422 + 中文原因；超时 504；等待中断
   assert.equal(r.status, 422);
   const body = await r.json();
   assert.equal(body.reason, 'disabled');
+  assert.equal(body.code, 'close_rejected');
   assert.match(body.error, /允许/);
 
   assert.equal((await closeReq('m-closef')).status, 504);
@@ -338,7 +339,7 @@ test('贴图：未知 reason 显示「贴图失败（reason）」', async () => 
   d.send({ type: 'imageFailed', sessionId: 3, uploadId: begin.uploadId, reason: 'weird' });
   const r = await res;
   assert.equal(r.status, 422);
-  assert.equal((await r.json()).error, '贴图失败（weird）');
+  assert.deepEqual(await r.json(), { error: '贴图失败（weird）', code: 'image_rejected', reason: 'weird' });
   d.ws.close();
   await d.closed;
 });

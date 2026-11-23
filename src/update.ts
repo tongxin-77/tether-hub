@@ -49,10 +49,18 @@ export interface UpdateStatus {
   url?: string;
   publishedAt?: string;
   checkedAt?: string;
+  /** 中文原文（兼容字段）；网页按 errorCode / errorParams 翻译（public/locales.js 的 upd.err.<errorCode>） */
   error?: string;
+  errorCode?: string;
+  errorParams?: Record<string, string | number>;
   state: UpdateState;
   log?: string;
 }
+
+type ErrParams = Record<string, string | number>;
+/** 带界面错误码的 Error：message 为中文原文（日志、审计、error 字段） */
+const codedError = (message: string, code: string, params: ErrParams = {}) => Object.assign(new Error(message), { i18n: { code, params } });
+const errI18n = (e: unknown) => (e as { i18n?: { code: string; params: ErrParams } }).i18n;
 
 /** 解析 vX.Y.Z / X.Y.Z；预发布等其他格式返回 undefined */
 export function parseVersion(v: string): number[] | undefined {
@@ -79,7 +87,7 @@ export interface UpdateSteps {
 const defaultSteps: UpdateSteps = {
   async download(url, file) {
     const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(300_000) });
-    if (!r.ok) throw new Error(`下载失败：HTTP ${r.status}`);
+    if (!r.ok) throw codedError(`下载失败：HTTP ${r.status}`, 'apply.download', { status: r.status });
     fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
   },
   // 以相对路径调用系统 tar：GNU tar 会把 C:\… 中的冒号当作远程主机；zip 用 Windows 自带的 bsdtar 解压
@@ -99,7 +107,7 @@ function exec(cmd: string, args: string[], cwd: string, shell = false): Promise<
     p.stderr.on('data', add);
     p.on('error', (e) => reject(Object.assign(e, { output: out })));
     p.on('close', (code) =>
-      code === 0 ? resolve(out) : reject(Object.assign(new Error(`${[cmd, ...args].join(' ')} 失败（退出码 ${code}）`), { output: out })));
+      code === 0 ? resolve(out) : reject(Object.assign(codedError(`${[cmd, ...args].join(' ')} 失败（退出码 ${code}）`, 'apply.cmd', { cmd: [cmd, ...args].join(' '), code: String(code) }), { output: out })));
   });
 }
 
@@ -193,31 +201,38 @@ export class Updater extends EventEmitter {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': UA },
         signal: AbortSignal.timeout(15_000),
       });
-      if (!r.ok) throw new Error(r.status === 403 || r.status === 429 ? `GitHub API 限流（HTTP ${r.status}），请稍后再试` : `HTTP ${r.status}`);
+      if (r.status === 403 || r.status === 429) throw codedError(`GitHub API 限流（HTTP ${r.status}），请稍后再试`, 'check.rate_limited', { status: r.status });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const rel = await r.json();
       const tag = String(rel?.tag_name ?? '');
-      if (rel.draft || rel.prerelease || !parseVersion(tag)) throw new Error(`最新发布的版本号无法识别：${tag || '（空）'}`);
-      if (typeof rel.tarball_url !== 'string') throw new Error('发布信息缺少 tarball_url');
+      if (rel.draft || rel.prerelease || !parseVersion(tag)) throw codedError(`最新发布的版本号无法识别：${tag || '（空）'}`, 'check.bad_tag', { tag: tag || '—' });
+      if (typeof rel.tarball_url !== 'string') throw codedError('发布信息缺少 tarball_url', 'check.no_tarball');
       this.tarball = rel.tarball_url;
       const newer = isNewer(tag, this.st.current);
       let error: string | undefined;
+      let errorParams: ErrParams | undefined;
       if (this.install) {
         const name = packageName(tag.replace(/^v/, ''), this.install.platform);
         const url = (n: string) => (Array.isArray(rel.assets) ? rel.assets : []).find((a: any) => a?.name === n)?.browser_download_url;
         const [pkg, sums] = [url(name), url('SHA256SUMS')];
         this.pkg = typeof pkg === 'string' && typeof sums === 'string' ? { url: pkg, sums } : undefined;
-        if (newer && !this.pkg) error = `${tag} 未提供更新包 ${name} 或 SHA256SUMS，无法一键更新，请到发布页下载安装包`;
+        if (newer && !this.pkg) {
+          error = `${tag} 未提供更新包 ${name} 或 SHA256SUMS，无法一键更新，请到发布页下载安装包`;
+          errorParams = { tag, name };
+        }
       }
       this.set({
         state: newer ? 'available' : 'idle',
         latest: tag, notes: String(rel.body ?? ''), url: String(rel.html_url ?? ''), publishedAt: rel.published_at,
-        checkedAt: new Date().toISOString(), error,
+        checkedAt: new Date().toISOString(), error, errorCode: error ? 'no_package' : undefined, errorParams,
       });
     } catch (e) {
       const err = e as Error & { cause?: { code?: string; message?: string } };
-      const msg = err.name === 'TimeoutError' ? '请求超时' : err.cause?.code ?? err.cause?.message ?? err.message;
+      const timeout = err.name === 'TimeoutError';
+      const msg = timeout ? '请求超时' : err.cause?.code ?? err.cause?.message ?? err.message;
+      const i18n = timeout ? { code: 'check.timeout', params: {} } : errI18n(e) ?? { code: 'check', params: { msg } };
       this.opt.log(`检查更新失败：${msg}`);
-      this.set({ state: before, checkedAt: new Date().toISOString(), error: `检查更新失败：${msg}` });
+      this.set({ state: before, checkedAt: new Date().toISOString(), error: `检查更新失败：${msg}`, errorCode: i18n.code, errorParams: i18n.params });
     }
   }
 
@@ -233,7 +248,7 @@ export class Updater extends EventEmitter {
     const to = this.st.latest!.replace(/^v/, '');
 
     this.lines = [];
-    this.set({ state: 'updating', error: undefined });
+    this.set({ state: 'updating', error: undefined, errorCode: undefined, errorParams: undefined });
     this.opt.log(`开始更新 ${from} → ${to}`);
     this.opt.audit({ time: new Date().toISOString(), event: 'update_start', from, to });
     try {
@@ -242,7 +257,8 @@ export class Updater extends EventEmitter {
       const reason = (e as Error).message;
       this.opt.log(`更新失败：${reason}`);
       this.opt.audit({ time: new Date().toISOString(), event: 'update_failed', from, to, reason });
-      this.set({ state: 'failed', error: `更新失败：${reason}` });
+      const i18n = errI18n(e) ?? { code: 'apply', params: { msg: reason } };
+      this.set({ state: 'failed', error: `更新失败：${reason}`, errorCode: i18n.code, errorParams: i18n.params });
       return;
     }
 
@@ -283,7 +299,7 @@ export class Updater extends EventEmitter {
       await this.step(`下载 v${to}`, () => this.steps.download(this.tarball!, file));
       await this.step('解压', () => (fs.mkdirSync(x), this.steps.extract(file, x)));
       const tops = fs.readdirSync(x, { withFileTypes: true }).filter((e) => e.isDirectory());
-      if (tops.length !== 1) throw new Error('源码包结构异常：应只有一个顶层目录');
+      if (tops.length !== 1) throw codedError('源码包结构异常：应只有一个顶层目录', 'apply.bad_source');
       const src = path.join(x, tops[0].name);
       await this.step('覆盖安装目录', async () => {
         for (const f of listFiles(src).filter((f) => !this.keep(f))) {
@@ -356,16 +372,16 @@ export class Updater extends EventEmitter {
         await this.steps.download(this.pkg!.sums, sums);
         const want = fs.readFileSync(sums, 'utf8').split(/\r?\n/)
           .map((l) => /^([0-9a-f]{64}) [ *]?(.+)$/i.exec(l.trim())).find((m) => m?.[2] === name)?.[1].toLowerCase();
-        if (!want) throw new Error(`SHA256SUMS 中没有 ${name}`);
+        if (!want) throw codedError(`SHA256SUMS 中没有 ${name}`, 'apply.sha_missing', { name });
         const got = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-        if (got !== want) throw new Error(`${name} 的 SHA256 不匹配：期望 ${want}，实际 ${got}`);
+        if (got !== want) throw codedError(`${name} 的 SHA256 不匹配：期望 ${want}，实际 ${got}`, 'apply.sha_mismatch', { name, want, got });
         return `${got}  ${name}`;
       });
       await this.step('解压', () => (fs.mkdirSync(x), this.steps.extract(file, x)));
       const tops = fs.readdirSync(x, { withFileTypes: true }).filter((e) => e.isDirectory());
-      if (tops.length !== 1) throw new Error('更新包结构异常：应只有一个顶层目录');
+      if (tops.length !== 1) throw codedError('更新包结构异常：应只有一个顶层目录', 'apply.bad_package');
       src = path.join(x, tops[0].name);
-      if (readInstall(src)?.platform !== platform) throw new Error(`更新包结构异常：缺少 install.json 或平台不是 ${platform}`);
+      if (readInstall(src)?.platform !== platform) throw codedError(`更新包结构异常：缺少 install.json 或平台不是 ${platform}`, 'apply.bad_platform', { platform });
       await this.step('替换应用文件', async () => {
         for (const e of fs.readdirSync(src)) {
           if (e === STAGE) continue;

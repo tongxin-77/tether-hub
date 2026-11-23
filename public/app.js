@@ -3,6 +3,7 @@
 // 机器 token：顶栏「Token」面板（列表、签发并一次性显示明文、页内二次确认吊销）。
 // 网页新建会话：机器详情会话卡片头「新建会话」对话框（本地 / SSH、最近目录、恢复 Claude 对话），建好后直接接管。
 // 页面：#main 机器与会话（手机上为机器列表）、#detail 机器详情（仅手机两级页面用）、#term 接管终端、#audit 审计日志。
+// 界面文字一律经 t() 取词条（locales.js / i18n.js）；API 错误按错误码翻译（apiError），切换语言即时重绘（relocalize）。
 'use strict';
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +22,7 @@ const IC = {
   reset: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   up: '<circle cx="12" cy="12" r="9"/><path d="m8 12 4-4 4 4"/><path d="M12 16V8"/>',
   key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="m16 7 3 3"/><path d="m19 4 2 2"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/>',
 };
 const ic = (n, c = '') => `<svg class="ic ${c}" viewBox="0 0 24 24" aria-hidden="true">${IC[n]}</svg>`;
 document.querySelectorAll('[data-i]').forEach((e) => (e.outerHTML = ic(e.dataset.i)));
@@ -28,36 +30,54 @@ document.querySelectorAll('[data-i]').forEach((e) => (e.outerHTML = ic(e.dataset
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 
-/** 审计事件：标签文字、样式、无 reason 时的说明 */
+/** 审计事件码 → 标签样式；名称与无 reason 时的说明为词条 ev.<码> / evd.<码>，reason 码的说明为 reason.<码> */
 const EV = {
-  update_start: ['开始更新', 't-pri', 'hub 开始一键更新'],
-  update_done: ['更新完成', 't-pri', 'hub 更新完成并重启'],
-  update_failed: ['更新失败', 't-err', 'hub 更新失败，已回滚'],
-  token_create: ['签发 token', 't-pri', '网页签发 token'],
-  token_revoke: ['吊销 token', 't-warn', '网页吊销 token'],
-  start: ['开始接管', 't-pri', '网页端开始接管'],
-  end: ['结束接管', '', '最后一个网页端关闭终端'],
-  denied: ['拒绝接管', 't-err', '接管被拒绝'],
-  reclaimed: ['本地收回', 't-warn', '本机用户收回控制'],
-  disabled: ['接管被关闭', 't-warn', '本机关闭了允许接管'],
-  exited: ['会话退出', '', '会话进程已退出'],
-  disconnected: ['连接断开', '', '机器连接断开，接管结束'],
-  image: ['贴图', 't-pri', '网页上传图片，路径已输入到会话'],
-  image_failed: ['贴图失败', 't-err', '贴图失败'],
-  close: ['关闭会话', 't-warn', '网页关闭了远端会话'],
-  close_failed: ['关闭失败', 't-err', '网页关闭会话失败'],
-  create: ['新建会话', 't-pri', '网页新建了会话'],
-  create_failed: ['新建失败', 't-err', '网页新建会话失败'],
+  update_start: 't-pri', update_done: 't-pri', update_failed: 't-err', token_create: 't-pri', token_revoke: 't-warn',
+  start: 't-pri', end: '', denied: 't-err', reclaimed: 't-warn', disabled: 't-warn', exited: '', disconnected: '',
+  image: 't-pri', image_failed: 't-err', close: 't-warn', close_failed: 't-err', create: 't-pri', create_failed: 't-err',
 };
-const REASON = {
-  reclaimed: '已被本地收回', disabled: '本机未允许接管', exited: '会话已退出', offline: '机器离线',
-  not_found: '会话不存在或已退出', probe: '探测连接不支持接管',
-  // 贴图失败（image_failed）
-  not_taken_over: '会话未被 hub 接管', unsupported: '仅本地会话支持贴图', too_large: '图片过大', bad_type: '文件内容与图片类型不符',
-  io: '本机保存图片失败', timeout: '等待本机回复超时', ended: '上传期间接管结束', disconnected: '等待期间机器断开',
-  // 新建会话失败（create_failed；not_found 此时指 SSH 主机不存在）
-  auth_required: 'SSH 需要密码或确认主机指纹', error: '本机操作失败',
-};
+const isEv = (e) => Object.prototype.hasOwnProperty.call(EV, e);
+
+// ---- 语言：localStorage tether.hub.locale（auto / 语言代码），auto 按浏览器语言列表解析 ----
+
+function savedLocale() {
+  try { return localStorage.getItem(LOCALE_KEY) || 'auto'; } catch { return 'auto'; }
+}
+function applyLocale() {
+  const pref = savedLocale();
+  LOCALE = resolveLocale(pref, navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
+  document.documentElement.lang = LOCALE;
+  translateDom(document);
+  const opts = `<option value="auto">${esc(t('lang.auto'))}</option>${LOCALES.map((l) => `<option value="${l}">${esc(LOCALE_NAMES[l])}</option>`).join('')}`;
+  document.querySelectorAll('.lang-sel').forEach((e) => {
+    e.innerHTML = opts;
+    e.value = LOCALES.includes(pref) ? pref : 'auto';
+  });
+  document.querySelectorAll('.lang-lbl').forEach((e) => (e.textContent = LOCALE_NAMES[LOCALE]));
+}
+applyLocale();
+document.addEventListener('change', (e) => {
+  if (!e.target.classList.contains('lang-sel')) return;
+  try { localStorage.setItem(LOCALE_KEY, e.target.value); } catch {}
+  relocalize();
+});
+window.addEventListener('languagechange', () => savedLocale() === 'auto' && relocalize());
+
+/**
+ * API 错误 → 当前语言文字。服务端回 {error, code?, params?, reason?, detail?}：
+ * daemon 拒绝（带 reason）时按 rej.<code>.<reason> 取说明，未知 reason 才显示 daemon 附带的 detail；
+ * 其余按 err.<code> 翻译；没有可用的码时退回服务端原文 error，再退回 fallback 词条（带状态码）。
+ */
+function apiError(body, status, fallback) {
+  const b = body || {};
+  if (b.code && b.reason !== undefined) {
+    const rk = `rej.${b.code}.${b.reason}`;
+    if (hasMsg(rk)) return b.reason === 'error' && b.detail ? t('common.detail', { text: t(rk), detail: b.detail }) : t(rk);
+    if (b.detail) return b.detail;
+  }
+  if (b.code && hasMsg(`err.${b.code}`)) return t(`err.${b.code}`, { ...b.params, reason: b.reason, status });
+  return b.error || t(fallback, { status });
+}
 
 let state = null;
 let es = null;
@@ -84,18 +104,17 @@ let noticeTimer = 0;
 function ago(ms) {
   if (!ms) return '—';
   const s = Math.max(0, (Date.now() - ms) / 1000);
-  if (s < 60) return '刚刚';
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
+  if (s < 60) return t('time.just_now');
+  const rtf = new Intl.RelativeTimeFormat(LOCALE, { numeric: 'always' });
+  if (s < 3600) return rtf.format(-Math.floor(s / 60), 'minute');
+  if (s < 86400) return rtf.format(-Math.floor(s / 3600), 'hour');
   return shortTime(ms);
 }
-const pad = (n) => String(n).padStart(2, '0');
 function shortTime(ms) {
   if (!ms) return '—';
-  const d = new Date(ms);
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return new Date(ms).toLocaleString(LOCALE, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 }
-const fullTime = (ms) => (ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '');
+const fullTime = (ms) => (ms ? new Date(ms).toLocaleString(LOCALE, { hour12: false }) : '');
 
 // ---- 主题：默认跟随系统，手动切换后记住 ----
 
@@ -152,10 +171,14 @@ function stopEvents() {
   es = null;
 }
 
+let sseKind = '';
 function setSse(kind) {
-  const [cls, text] = { ok: ['ok', '实时连接正常'], retry: ['warn', '正在重新连接…'], err: ['err', '实时连接已断开'] }[kind];
-  $('sse').innerHTML = `<i class="dot ${cls}"></i><span class="lbl">${text}</span>`;
-  $('sse').title = `实时推送（SSE）：${text}`;
+  if (!kind) return;
+  sseKind = kind;
+  const [cls, key] = { ok: ['ok', 'sse.ok'], retry: ['warn', 'sse.retry'], err: ['err', 'sse.err'] }[kind];
+  const text = t(key);
+  $('sse').innerHTML = `<i class="dot ${cls}"></i><span class="lbl">${esc(text)}</span>`;
+  $('sse').title = t('sse.title', { text });
 }
 
 // EventSource 遇到网络中断会自动重连；若被服务器以非 200 拒绝（如登录失效）则彻底关闭，此时自行判断是否需要重新登录
@@ -177,7 +200,7 @@ function startEvents() {
     setSse('err');
     try {
       const r = await fetch('/api/me');
-      if (r.status === 401) return showLogin('登录已失效，请重新登录');
+      if (r.status === 401) return showLogin(t('common.session_expired'));
     } catch {}
     retryTimer = setTimeout(startEvents, 3000);
   };
@@ -189,7 +212,7 @@ const isWaiting = (s) => s.claude && s.claude.state === 'waiting';
 const machines = () => (state ? state.machines : []);
 const selected = () => machines().find((m) => m.machineId === selId);
 const mName = (m) => m.name || m.machineId;
-const sName = (s) => s.name || `会话 ${s.id}`;
+const sName = (s) => s.name || t('common.session_n', { id: s.id });
 const live = (m) => m.sessions.filter((s) => s.status !== 'exited').length;
 
 function render() {
@@ -210,7 +233,7 @@ function renderAlert() {
   box.hidden = !list.length || view === 'audit' || (view === 'detail' && isM());
   if (!list.length) return box.classList.remove('open');
   box.innerHTML = `<div class="ac-head" data-toggle>${ic('alert')}
-      <span><b>${list.length} 个会话</b><span class="only-d">中 Claude 正在</span>等待确认</span>
+      <span><b>${esc(t('alert.sessions', { n: list.length }))}</b><span class="only-d">${esc(t('alert.claude_waiting'))}</span><span class="only-m">${esc(t('alert.waiting'))}</span></span>
       <span class="ac-chips">${list.map(([m, s]) => `<button class="chip" data-pick="${esc(m.machineId)}" title="${esc(s.claude.message || '')}">${esc(mName(m))} · ${esc(sName(s))}</button>`).join('')}</span>
       <span class="ac-more">${ic('chevR')}</span></div>
     <div class="ac-list">${list.map(([m, s]) => `<button class="ac-item" data-pick="${esc(m.machineId)}"><b>${esc(sName(s))}</b><span class="muted">${esc(mName(m))}</span>${ic('chevR')}</button>`).join('')}</div>`;
@@ -219,41 +242,42 @@ function renderAlert() {
 function renderMachines() {
   const all = machines();
   const kw = $('m-search').value.trim().toLowerCase();
-  $('m-stat').textContent = state ? `${all.filter((m) => m.online).length} 在线 / 共 ${all.length} 台` : '';
+  $('m-stat').textContent = state ? t('machines.stat', { online: all.filter((m) => m.online).length, total: all.length }) : '';
   const rows = all.filter((m) => !kw || `${m.name} ${m.machineId} ${m.tokenName}`.toLowerCase().includes(kw));
   $('m-list').innerHTML = rows.map((m) => {
     const n = m.sessions.filter(isWaiting).length;
     return `<div class="mitem${m.machineId === selId ? ' sel' : ''}${m.online ? '' : ' off'}" data-pick="${esc(m.machineId)}">
       <i class="dot${m.online ? ' ok' : ''}"></i>
       <div class="mm"><div class="mname"><span class="n">${esc(mName(m))}</span><span class="v">v${esc(m.version || '?')}</span></div>
-      <div class="msub" title="${esc(fullTime(m.lastSeen))}">${m.online ? `在线 · ${live(m)} 个活动会话` : `离线 · 最后在线 ${ago(m.lastSeen)}`}</div></div>
-      ${n ? `<span class="cnt" title="${n} 个会话等待确认">${n}</span>` : ''}
+      <div class="msub" title="${esc(fullTime(m.lastSeen))}">${esc(m.online ? t('machines.online_sessions', { n: live(m) }) : t('machines.offline_since', { ago: ago(m.lastSeen) }))}</div></div>
+      ${n ? `<span class="cnt" title="${esc(t('machines.waiting_title', { n }))}">${n}</span>` : ''}
       <span class="chev only-m">${ic('chevR')}</span></div>`;
-  }).join('') || `<div class="empty">${!state ? '加载中…' : all.length ? '没有匹配的机器'
-    : '还没有机器接入。<br>在顶栏「Token」中签发 token，<br>并在 Tether 客户端设置中填写服务器地址与 token。'}</div>`;
+  }).join('') || `<div class="empty">${!state ? esc(t('common.loading')) : all.length ? esc(t('machines.no_match'))
+    : t('machines.empty').split('\n').map(esc).join('<br>')}</div>`;
 }
 
 function claudeTag(c) {
   if (!c) return '<span class="muted">—</span>';
   switch (c.state) {
-    case 'waiting': return `<span class="tag t-warn">${ic('alert', 'ic-sm')}等待确认</span>`;
-    case 'thinking': return '<span class="tag"><i class="dot info"></i>思考中</span>';
-    case 'background': return `<span class="tag"><i class="dot pur"></i>后台运行中${c.count ? ` ×${c.count}` : ''}</span>`;
-    case 'done': return '<span class="tag">已完成</span>';
-    case 'idle': return '<span class="tag">空闲</span>';
+    case 'waiting': return `<span class="tag t-warn">${ic('alert', 'ic-sm')}${esc(t('claude.waiting'))}</span>`;
+    case 'thinking': return `<span class="tag"><i class="dot info"></i>${esc(t('claude.thinking'))}</span>`;
+    case 'background': return `<span class="tag"><i class="dot pur"></i>${esc(t('claude.background'))}${c.count ? ` ×${c.count}` : ''}</span>`;
+    case 'done': return `<span class="tag">${esc(t('claude.done'))}</span>`;
+    case 'idle': return `<span class="tag">${esc(t('claude.idle'))}</span>`;
     default: return `<span class="tag">${esc(c.state)}</span>`;
   }
 }
 const stCell = (st) => ({
-  running: '<span class="st"><i class="dot ok"></i>运行中</span>',
-  waiting: '<span class="st" title="有新结果或提醒，会话里还没有操作过"><i class="dot"></i>待查看</span>',
-  exited: '<span class="st muted"><i class="dot"></i>已退出</span>',
-})[st] || `<span class="st">${esc(st)}</span>`;
+  running: () => `<span class="st"><i class="dot ok"></i>${esc(t('status.running'))}</span>`,
+  waiting: () => `<span class="st" title="${esc(t('status.waiting_title'))}"><i class="dot"></i>${esc(t('status.waiting'))}</span>`,
+  exited: () => `<span class="st muted"><i class="dot"></i>${esc(t('status.exited'))}</span>`,
+}[st] || (() => `<span class="st">${esc(st)}</span>`))();
 
 function takeBtn(m, s) {
-  if (s.status === 'exited') return '<button class="btn btn-sm" disabled title="会话已退出">接管</button>';
-  if (!m.online) return '<button class="btn btn-sm" disabled title="机器离线">接管</button>';
-  return `<button class="btn btn-sm${isWaiting(s) ? ' btn-primary' : ''}" data-take="${esc(m.machineId)}" data-sid="${s.id}">接管</button>`;
+  const take = esc(t('act.take'));
+  if (s.status === 'exited') return `<button class="btn btn-sm" disabled title="${esc(t('act.session_exited'))}">${take}</button>`;
+  if (!m.online) return `<button class="btn btn-sm" disabled title="${esc(t('act.machine_offline'))}">${take}</button>`;
+  return `<button class="btn btn-sm${isWaiting(s) ? ' btn-primary' : ''}" data-take="${esc(m.machineId)}" data-sid="${s.id}">${take}</button>`;
 }
 
 /** 运行中会话的「关闭」：页内二次确认；机器离线或 Tether 不支持时置灰并说明原因 */
@@ -261,21 +285,22 @@ function closeBtn(m, s) {
   if (s.status === 'exited') return '';
   const key = `${m.machineId}/${s.id}`;
   const err = closeErr && closeErr.key === key ? `<div class="cl-err">${esc(closeErr.text)}</div>` : '';
-  const why = !m.online ? '机器离线' : !(m.caps || []).includes('close') ? '网页关闭会话需 Tether 0.5.0+' : '';
-  if (why) return `<button class="btn btn-sm" disabled title="${why}">关闭</button>`;
-  if (closeBusy === key) return '<button class="btn btn-sm" disabled>关闭中…</button>';
+  const why = !m.online ? t('act.machine_offline') : !(m.caps || []).includes('close') ? t('act.close_needs') : '';
+  const close = esc(t('common.close'));
+  if (why) return `<button class="btn btn-sm" disabled title="${esc(why)}">${close}</button>`;
+  if (closeBusy === key) return `<button class="btn btn-sm" disabled>${esc(t('act.closing'))}</button>`;
   const attrs = `data-m="${esc(m.machineId)}" data-sid="${s.id}"`;
   if (closeAsk === key) {
-    return `<span class="cl-ask"><span class="cl-q">结束该会话进程？</span><button class="btn btn-sm" data-close-cancel>取消</button><button class="btn btn-sm btn-primary" data-close-ok ${attrs}>确认关闭</button></span>${err}`;
+    return `<span class="cl-ask"><span class="cl-q">${esc(t('act.close_ask'))}</span><button class="btn btn-sm" data-close-cancel>${esc(t('common.cancel'))}</button><button class="btn btn-sm btn-primary" data-close-ok ${attrs}>${esc(t('act.close_ok'))}</button></span>${err}`;
   }
-  return `<button class="btn btn-sm" data-close ${attrs} title="结束该会话（本机需允许 hub 远程接管）">关闭</button>${err}`;
+  return `<button class="btn btn-sm" data-close ${attrs} title="${esc(t('act.close_title'))}">${close}</button>${err}`;
 }
 
 /** 会话卡片头的「新建会话」：机器离线或 Tether 不支持时置灰并说明原因 */
 function newBtn(m) {
-  const why = !m.online ? '机器离线' : !(m.caps || []).includes('create') ? '网页新建会话需更新该机器的 Tether' : '';
-  if (why) return `<button class="btn btn-sm" disabled title="${why}">新建会话</button>`;
-  return `<button class="btn btn-sm btn-primary" data-new="${esc(m.machineId)}" title="在该机器上新建会话并直接接管（本机需允许 hub 远程接管）">新建会话</button>`;
+  const why = !m.online ? t('act.machine_offline') : !(m.caps || []).includes('create') ? t('act.new_needs') : '';
+  if (why) return `<button class="btn btn-sm" disabled title="${esc(why)}">${esc(t('act.new'))}</button>`;
+  return `<button class="btn btn-sm btn-primary" data-new="${esc(m.machineId)}" title="${esc(t('act.new_title'))}">${esc(t('act.new'))}</button>`;
 }
 
 async function closeSession(machineId, sid) {
@@ -287,10 +312,10 @@ async function closeSession(machineId, sid) {
   let text = '';
   try {
     const r = await fetch(`/api/session/close?machine=${encodeURIComponent(machineId)}&session=${sid}`, { method: 'POST' });
-    if (r.status === 401) return showLogin('登录已失效，请重新登录');
-    if (!r.ok) text = (await r.json().catch(() => ({}))).error || `关闭失败（${r.status}）`;
+    if (r.status === 401) return showLogin(t('common.session_expired'));
+    if (!r.ok) text = apiError(await r.json().catch(() => ({})), r.status, 'act.close_failed');
   } catch {
-    text = '无法连接服务器';
+    text = t('common.no_server');
   } finally {
     closeBusy = null;
   }
@@ -302,49 +327,50 @@ async function closeSession(machineId, sid) {
 function renderDetail() {
   const m = selected();
   if (!m) {
-    $('detail').innerHTML = state ? '<div class="empty">选择左侧机器查看详情</div>' : '';
+    $('detail').innerHTML = state ? `<div class="empty">${esc(t('detail.pick'))}</div>` : '';
     return;
   }
   const n = m.sessions.filter(isWaiting).length;
   const ss = m.sessions;
   const rowCls = (s) => `${isWaiting(s) ? 'need' : ''}${s.status === 'exited' ? ' exited' : ''}`;
   const msg = (s) => (isWaiting(s) && s.claude.message ? `<div class="smsg">${esc(s.claude.message)}</div>` : '');
-  const tip = (s) => esc(`${s.host ? `远程主机：${s.host}\n` : ''}目录：${s.cwd || ''}\n命令：${s.command || ''}`);
-  const seen = m.online ? `上线于 ${ago(m.lastSeen)}` : ago(m.lastSeen);
+  const tip = (s) => esc(`${s.host ? `${t('detail.tip_host', { host: s.host })}\n` : ''}${t('detail.tip_cwd', { cwd: s.cwd || '' })}\n${t('detail.tip_cmd', { cmd: s.command || '' })}`);
+  const seen = m.online ? t('detail.online_since', { ago: ago(m.lastSeen) }) : ago(m.lastSeen);
+  const onTag = (cls) => (m.online ? `<span class="${cls}"><i class="dot ok"></i>${esc(t('common.online'))}</span>` : `<span class="${cls}"><i class="dot"></i>${esc(t('common.offline'))}</span>`);
   $('detail').innerHTML = `${notice ? `<div class="banner def notice">${ic('info')}<div><span class="bt">${esc(notice)}</span></div></div>` : ''}
     <div class="dhead">
-      <button class="back" data-back aria-label="返回">${ic('chevL')}</button>
+      <button class="back" data-back aria-label="${esc(t('detail.back'))}">${ic('chevL')}</button>
       <h2>${esc(mName(m))}</h2>
-      ${m.online ? '<span class="tag t-pri"><i class="dot ok"></i>在线</span>' : '<span class="tag"><i class="dot"></i>离线</span>'}
-      ${n ? `<span class="tag t-warn">${ic('alert', 'ic-sm')}${n} 个等待确认</span>` : ''}
-      <span class="right only-d" title="${esc(fullTime(m.lastSeen))}">${m.online ? seen : `最后在线：${seen}`}</span>
+      ${onTag(m.online ? 'tag t-pri' : 'tag')}
+      ${n ? `<span class="tag t-warn">${ic('alert', 'ic-sm')}${esc(t('detail.waiting_n', { n }))}</span>` : ''}
+      <span class="right only-d" title="${esc(fullTime(m.lastSeen))}">${esc(m.online ? seen : t('detail.last_seen', { ago: seen }))}</span>
     </div>
-    <div class="card"><div class="card-head"><h3>机器信息</h3></div><div class="card-body">
+    <div class="card"><div class="card-head"><h3>${esc(t('detail.info'))}</h3></div><div class="card-body">
       <div class="desc">
-        <div class="di"><div class="dl">机器名称</div><div class="dv" title="${esc(m.machineId)}">${esc(mName(m))}</div></div>
-        <div class="di"><div class="dl">连接状态</div><div class="dv">${m.online ? '<span class="st"><i class="dot ok"></i>在线</span>' : '<span class="st"><i class="dot"></i>离线</span>'}</div></div>
-        <div class="di"><div class="dl">Tether 版本</div><div class="dv">${esc(m.version || '?')}</div></div>
-        <div class="di"><div class="dl">${m.online ? '本次上线' : '最后在线'}</div><div class="dv" title="${esc(fullTime(m.lastSeen))}">${ago(m.lastSeen)}</div></div>
-        <div class="di"><div class="dl">Token 名称</div><div class="dv mono">${esc(m.tokenName)}</div></div>
-        <div class="di"><div class="dl">会话</div><div class="dv">${live(m)} 活动 / ${ss.length} 总计</div></div>
+        <div class="di"><div class="dl">${esc(t('detail.name'))}</div><div class="dv" title="${esc(m.machineId)}">${esc(mName(m))}</div></div>
+        <div class="di"><div class="dl">${esc(t('detail.conn'))}</div><div class="dv">${onTag('st')}</div></div>
+        <div class="di"><div class="dl">${esc(t('detail.version'))}</div><div class="dv">${esc(m.version || '?')}</div></div>
+        <div class="di"><div class="dl">${esc(t(m.online ? 'detail.this_online' : 'detail.last_online'))}</div><div class="dv" title="${esc(fullTime(m.lastSeen))}">${esc(ago(m.lastSeen))}</div></div>
+        <div class="di"><div class="dl">${esc(t('detail.token'))}</div><div class="dv mono">${esc(m.tokenName)}</div></div>
+        <div class="di"><div class="dl">${esc(t('detail.sessions'))}</div><div class="dv">${esc(t('detail.sessions_val', { live: live(m), total: ss.length }))}</div></div>
       </div></div></div>
-    <div class="card"><div class="card-head"><h3>会话</h3><div class="extra">${m.online ? '列表实时更新' : '离线，显示最后已知状态'}${newBtn(m)}</div></div>
+    <div class="card"><div class="card-head"><h3>${esc(t('detail.sessions'))}</h3><div class="extra">${esc(t(m.online ? 'detail.live_updates' : 'detail.offline_hint'))}${newBtn(m)}</div></div>
       ${ss.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>
-        <th>名称 / 命令</th><th>工作目录</th><th>状态</th><th>Claude</th><th>SSH 主机</th><th>开始 / 最后活动</th><th class="r">操作</th></tr></thead><tbody>
+        <th>${esc(t('detail.th_name'))}</th><th>${esc(t('detail.th_cwd'))}</th><th>${esc(t('detail.th_status'))}</th><th>Claude</th><th>${esc(t('detail.th_host'))}</th><th>${esc(t('detail.th_time'))}</th><th class="r">${esc(t('detail.th_actions'))}</th></tr></thead><tbody>
         ${ss.map((s) => `<tr class="${rowCls(s)}">
           <td><div class="sname">${esc(sName(s))}</div><div class="scmd">${esc(s.command)}</div>${msg(s)}</td>
           <td><div class="cwd" title="${tip(s)}">${esc(s.cwd)}</div></td>
           <td>${stCell(s.status)}</td><td>${claudeTag(s.claude)}</td>
           <td class="mono scmd">${s.host ? esc(s.host) : '<span class="muted">—</span>'}</td>
-          <td class="tm" title="最后活动：${esc(fullTime(s.lastActivityAt))}"><div>${shortTime(s.startedAt)}</div><div>${ago(s.lastActivityAt)}</div></td>
+          <td class="tm" title="${esc(t('detail.last_activity', { time: fullTime(s.lastActivityAt) }))}"><div>${esc(shortTime(s.startedAt))}</div><div>${esc(ago(s.lastActivityAt))}</div></td>
           <td class="r"><div class="acts">${takeBtn(m, s)}${closeBtn(m, s)}</div></td></tr>`).join('')}
         </tbody></table></div>
       <div class="scards">${ss.map((s) => `<div class="scard ${rowCls(s)}">
         <div class="sc"><div class="r1"><span class="sname">${esc(sName(s))}</span>${s.claude ? claudeTag(s.claude) : ''}</div>
         <div class="r2">${esc(s.cwd)} › ${esc(s.command)}</div>${msg(s)}
-        <div class="r3">${stCell(s.status)}<span>${ago(s.lastActivityAt)}</span>${s.host ? `<span class="mono">${esc(s.host)}</span>` : ''}</div></div>
+        <div class="r3">${stCell(s.status)}<span>${esc(ago(s.lastActivityAt))}</span>${s.host ? `<span class="mono">${esc(s.host)}</span>` : ''}</div></div>
         <div class="acts">${takeBtn(m, s)}${closeBtn(m, s)}</div></div>`).join('')}</div>`
-      : `<div class="empty">${m.online ? '该机器暂无会话' : '离线，暂无会话信息'}</div>`}
+      : `<div class="empty">${esc(t(m.online ? 'detail.no_sessions' : 'detail.offline_no_sessions'))}</div>`}
     </div>`;
 }
 
@@ -394,16 +420,10 @@ window.addEventListener('hashchange', route);
 
 /** 整段都是终端查询应答：CPR / DSR、DA1 / DA2、DECRQM、OSC 颜色等、DCS（DECRQSS、XTVERSION） */
 const QUERY_REPLY = /^(?:\x1b\[\d+;\d+R|\x1b\[\d*n|\x1b\[[?>][\d;]*c|\x1b\[\??[\d;]+\$y|\x1b\][^\x07\x1b]*(?:\x07|\x1b\x5c)|\x1bP[^\x1b]*\x1b\x5c)+$/;
-/** 结束原因：样式、标签、横幅标题、说明、可否重新接管 */
+/** 结束原因：样式、可否重新接管；标签 / 横幅标题 / 说明为词条 end.<原因>.tag / title / desc */
 const END = {
-  reclaimed: ['warn', '已被本地收回', '本机已收回控制', '本机用户在 Tether 中恢复了操作，网页端输入已停止。', true],
-  disabled: ['err', '接管被关闭', '本机关闭了远程接管', '该机器在 Tether 设置中取消了「允许 hub 远程接管本机会话」。'],
-  denied: ['err', '未允许接管', '本机未允许远程接管', '请在该机器 Tether 设置「管理服务器」中勾选「允许 hub 远程接管本机会话」。'],
-  exited: ['def', '会话已退出', '会话已退出', '进程已结束，以下为最后输出。'],
-  offline: ['err', '机器离线', '机器离线', '与该机器的连接已断开，恢复后需重新接管。', true],
-  not_found: ['err', '会话不存在', '会话不存在或已退出', '该会话已不在机器的会话列表中。'],
-  probe: ['err', '不支持接管', '探测连接不支持接管', '该机器当前为测试连接。'],
-  closed: ['err', '连接已断开', '连接已断开', '与 hub 的终端连接中断。', true],
+  reclaimed: ['warn', true], disabled: ['err'], denied: ['err'], exited: ['def'],
+  offline: ['err', true], not_found: ['err'], probe: ['err'], closed: ['err', true],
 };
 
 const utf8 = new TextEncoder();
@@ -425,25 +445,34 @@ function termTheme() {
   };
 }
 
+/** 当前终端状态，切换语言时据此重绘 */
+let termKind = '';
+let termReason = '';
 function setTermState(kind, reason) {
+  termKind = kind;
+  termReason = reason;
   const ended = kind === 'ended';
   $('term-wrap').classList.toggle('ro', ended);
   $('keys').classList.toggle('dis', kind !== 'active');
   syncImgBtn();
   $('t-banner').innerHTML = '';
   if (kind === 'connecting') {
-    $('t-tag').innerHTML = '<span class="tag"><i class="dot info"></i>连接中…</span>';
+    $('t-tag').innerHTML = `<span class="tag"><i class="dot info"></i>${esc(t('term.connecting'))}</span>`;
     $('t-foot').innerHTML = '';
   } else if (kind === 'active') {
-    $('t-tag').innerHTML = '<span class="tag t-pri"><i class="dot ok"></i>接管中</span>';
-    $('t-foot').innerHTML = `<span>键盘输入直接发送到远程会话</span><span id="t-size">${term.cols} × ${term.rows}</span><span class="end">本机可随时在 Tether 中收回控制</span>`;
+    $('t-tag').innerHTML = `<span class="tag t-pri"><i class="dot ok"></i>${esc(t('term.active'))}</span>`;
+    $('t-foot').innerHTML = `<span>${esc(t('term.foot_input'))}</span><span id="t-size">${term.cols} × ${term.rows}</span><span class="end">${esc(t('term.foot_reclaim'))}</span>`;
   } else {
-    const [cls, tag, title, desc, retry] = END[reason] || ['err', `已结束（${reason}）`, '接管已结束', `原因：${reason}`];
+    const known = END[reason];
+    const [cls, retry] = known || ['err'];
+    const tag = known ? t(`end.${reason}.tag`) : t('term.ended_tag', { reason });
+    const title = known ? t(`end.${reason}.title`) : t('term.ended_title');
+    const desc = known ? t(`end.${reason}.desc`) : t('term.ended_desc', { reason });
     $('t-tag').innerHTML = `<span class="tag ${cls === 'def' ? '' : `t-${cls}`}">${esc(tag)}</span>`;
     $('t-banner').innerHTML = `<div class="banner ${cls}">${ic(cls === 'def' ? 'info' : cls === 'err' ? 'alertC' : 'alert')}
       <div><span class="bt">${esc(title)}</span> <span class="bd">${esc(desc)}</span></div>
-      ${retry ? '<div class="act"><button class="btn btn-sm btn-primary" data-retake>重新接管</button></div>' : ''}</div>`;
-    $('t-foot').innerHTML = '<span>只读 · 不再向远程发送输入</span>';
+      ${retry ? `<div class="act"><button class="btn btn-sm btn-primary" data-retake>${esc(t('term.retake'))}</button></div>` : ''}</div>`;
+    $('t-foot').innerHTML = `<span>${esc(t('term.readonly'))}</span>`;
   }
 }
 
@@ -463,17 +492,17 @@ function connectTerm() {
   $('t-sub').textContent = `${ref.machine} · ${ref.cwd}`;
   setTermState('connecting');
 
-  const t = (term = new Terminal({
+  const xt = (term = new Terminal({
     fontFamily: '"Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace', fontSize: isM() ? 12 : 14,
     cursorBlink: true, scrollback: 10000, theme: termTheme(),
   }));
   const fit = new FitAddon.FitAddon();
-  t.loadAddon(fit);
-  t.open($('term-box'));
+  xt.loadAddon(fit);
+  xt.open($('term-box'));
   fit.fit();
   // Ctrl+C 有选区时复制、Ctrl+V 粘贴：交给浏览器默认行为，由 xterm 的 copy / paste 事件处理（多行粘贴、括号粘贴模式）
-  t.attachCustomKeyEventHandler((e) => !(e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.shiftKey
-    && ((e.key === 'c' && t.hasSelection()) || e.key === 'v')));
+  xt.attachCustomKeyEventHandler((e) => !(e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.shiftKey
+    && ((e.key === 'c' && xt.hasSelection()) || e.key === 'v')));
 
   const ws = (termWs = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/term?machine=${encodeURIComponent(ref.machineId)}&session=${ref.sessionId}`));
   let ready = false;
@@ -482,7 +511,7 @@ function connectTerm() {
   const send = (msg) => ready && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
   // xterm 对终端查询的自动应答（光标位置、设备属性、模式、颜色、DCS）不转发：
   // 本地 GUI 或 daemon 已负责应答，多个查看者都回复会在 PTY 中出现重复应答乱码
-  t.onData((d) => {
+  xt.onData((d) => {
     // 粘滞 Ctrl 只作用于下一个可打印字符（方向键、Esc 等以控制字符开头，不受影响）
     if (ctrlOn && d.charCodeAt(0) >= 0x20 && d.charCodeAt(0) !== 0x7f) {
       d = ctrlChar(d[0]) + d.slice(1);
@@ -490,12 +519,12 @@ function connectTerm() {
     }
     if (!QUERY_REPLY.test(d)) send({ type: 'input', data: toB64(utf8.encode(d)) });
   });
-  t.onBinary((d) => send({ type: 'input', data: btoa(d) }));
+  xt.onBinary((d) => send({ type: 'input', data: btoa(d) }));
   // 滚离底部时显示「回到底部」；上翻期间有新输出 xterm 不会跳回，回到底部后恢复跟随
-  const syncBottom = () => { const b = t.buffer.active; $('t-bottom').hidden = b.viewportY >= b.baseY; };
-  t.onScroll(syncBottom);
-  t.buffer.onBufferChange(syncBottom);
-  t.onResize(({ cols, rows }) => {
+  const syncBottom = () => { const b = xt.buffer.active; $('t-bottom').hidden = b.viewportY >= b.baseY; };
+  xt.onScroll(syncBottom);
+  xt.buffer.onBufferChange(syncBottom);
+  xt.onResize(({ cols, rows }) => {
     send({ type: 'resize', cols, rows });
     if ($('t-size')) $('t-size').textContent = `${cols} × ${rows}`;
   });
@@ -506,7 +535,7 @@ function connectTerm() {
   const end = (reason) => {
     ended = true;
     ready = false;
-    t.options.disableStdin = true;
+    xt.options.disableStdin = true;
     setTermState('ended', reason);
   };
   ws.onmessage = (e) => {
@@ -515,24 +544,24 @@ function connectTerm() {
       // 先按快照尺寸写入避免错行，再适配窗口并把新尺寸发给 daemon；
       // history（Tether 0.5.0+）先写入：历史行 + rows 个换行把它们推进 scrollback，备用屏时末尾为 ?1049h，快照随后写入当前屏
       sizing = true;
-      t.reset();
-      if (msg.cols > 0 && msg.rows > 0) t.resize(msg.cols, msg.rows);
-      if (msg.history) t.write(fromB64(msg.history));
-      t.write(fromB64(msg.data), () => {
+      xt.reset();
+      if (msg.cols > 0 && msg.rows > 0) xt.resize(msg.cols, msg.rows);
+      if (msg.history) xt.write(fromB64(msg.history));
+      xt.write(fromB64(msg.data), () => {
         sizing = false;
         ready = true;
         fit.fit();
         syncBottom();
-        if ($('t-size')) $('t-size').textContent = `${t.cols} × ${t.rows}`;
+        if ($('t-size')) $('t-size').textContent = `${xt.cols} × ${xt.rows}`;
       });
       setTermState('active');
-      t.focus();
+      xt.focus();
     } else if (msg.type === 'output') {
-      t.write(fromB64(msg.data));
+      xt.write(fromB64(msg.data));
     } else if (msg.type === 'detached' && msg.reason === 'session_closed') {
       // 会话被网页关闭（随后从会话列表消失）：关闭终端页，回到机器页提示
       ended = true;
-      showNotice(`会话「${ref.name}」已关闭`);
+      showNotice(t('detail.closed_notice', { name: ref.name }));
       leaveTerm();
     } else if (msg.type === 'detached' || msg.type === 'denied') {
       end(msg.type === 'denied' && msg.reason === 'disabled' ? 'denied' : msg.reason);
@@ -614,16 +643,16 @@ let toastTimer = 0;
 function imgBlock() {
   const m = termRef && machines().find((x) => x.machineId === termRef.machineId);
   const s = m && m.sessions.find((x) => x.id === termRef.sessionId);
-  if (!m || !m.online) return '机器离线';
-  if (!(m.caps || []).includes('image')) return '贴图需 Tether 0.5.0+';
-  if (s && s.host) return 'SSH 会话不支持贴图，仅本地会话可用';
+  if (!m || !m.online) return t('act.machine_offline');
+  if (!(m.caps || []).includes('image')) return t('img.needs');
+  if (s && s.host) return t('img.ssh');
   return '';
 }
 function syncImgBtn() {
   const b = $('keys').querySelector('[data-key="image"]');
   const why = imgBlock();
   b.classList.toggle('off', !!why);
-  b.title = why || '选择图片上传，路径输入到会话';
+  b.title = why || t('img.btn_title');
 }
 
 /** 终端顶部提示条；ms 为 0 时一直显示，text 为空即隐藏 */
@@ -640,22 +669,22 @@ function toast(text, kind = '', ms = 0) {
 async function sendImage(file) {
   const why = imgBlock();
   if (why) return toast(why, 'err', 4000);
-  if (imgBusy) return toast('上一张图片还在上传', 'err', 3000);
+  if (imgBusy) return toast(t('img.busy'), 'err', 3000);
   const ref = termRef;
   imgBusy = true;
-  toast('正在处理图片…');
+  toast(t('img.processing'));
   let blob;
   try {
     blob = await prepareImage(file);
   } catch (e) {
     imgBusy = false;
-    return toast(e.message, 'err', 4000);
+    return toast(e.code ? t(`img.${e.code}`) : e.message, 'err', 4000);
   }
   if (blob.size > MAX_IMG) {
     imgBusy = false;
-    return toast('图片过大（上限 10 MB）', 'err', 4000);
+    return toast(t('img.too_large'), 'err', 4000);
   }
-  toast(`正在上传图片…（${Math.ceil(blob.size / 1024)} KB）`);
+  toast(t('img.uploading', { kb: Math.ceil(blob.size / 1024) }));
   let ok = false;
   let msg;
   try {
@@ -664,13 +693,13 @@ async function sendImage(file) {
     });
     if (r.status === 401) {
       imgBusy = false;
-      return showLogin('登录已失效，请重新登录');
+      return showLogin(t('common.session_expired'));
     }
     const body = await r.json().catch(() => ({}));
     ok = r.ok;
-    msg = ok ? '已插入图片路径' : body.error || `上传失败（${r.status}）`;
+    msg = ok ? t('img.inserted') : apiError(body, r.status, 'img.upload_failed');
   } catch {
-    msg = '上传失败：无法连接服务器';
+    msg = t('img.upload_no_server');
   }
   imgBusy = false;
   if (termRef === ref) toast(msg, ok ? 'ok' : 'err', ok ? 2500 : 5000);
@@ -696,7 +725,7 @@ async function pasteKey() {
           const type = i.types.find((t) => t.startsWith('image/'));
           if (type) return sendImage(await i.getType(type));
         }
-        return toast('剪贴板为空', '', 2500);
+        return toast(t('img.clipboard_empty'), '', 2500);
       }
       return term && term.paste(await navigator.clipboard.readText());
     } catch {} // 未授权或不支持：退回弹层
@@ -897,7 +926,7 @@ async function copyTv() {
     try { ok = document.execCommand('copy'); } catch {}
   }
   clearTimeout(tvTimer);
-  $('tv-tip').textContent = ok ? '已复制' : '无法自动复制，已全选，请长按手动复制';
+  $('tv-tip').textContent = ok ? t('common.copied') : t('tv.copy_failed');
   if (ok) tvTimer = setTimeout(() => ($('tv-tip').textContent = ''), 2500);
 }
 $('t-text').addEventListener('click', openTv);
@@ -919,12 +948,12 @@ async function ncFetch(url, init) {
     const r = await fetch(url, init);
     if (r.status === 401) {
       closeNc();
-      showLogin('登录已失效，请重新登录');
+      showLogin(t('common.session_expired'));
       return null;
     }
     return [r.status, await r.json().catch(() => ({}))];
   } catch {
-    return [0, { error: '无法连接服务器' }];
+    return [0, { error: t('common.no_server') }];
   }
 }
 
@@ -932,11 +961,11 @@ function openNc(machineId) {
   const m = machines().find((x) => x.machineId === machineId);
   if (!m) return;
   nc = { machineId, opts: null, hist: null, pick: null, busy: '' };
-  $('nc-sub').textContent = `机器：${mName(m)}`;
+  $('nc-sub').textContent = t('nc.machine', { name: mName(m) });
   document.querySelector('input[name="nc-kind"][value="local"]').checked = true;
   $('nc-cwd').value = '';
   $('nc-resume').checked = false;
-  $('nc-recent').innerHTML = '<option value="">最近目录…</option>';
+  $('nc-recent').innerHTML = `<option value="">${esc(t('nc.recent'))}</option>`;
   $('nc-host').innerHTML = '';
   $('nc-err').textContent = '';
   $('nc').hidden = false;
@@ -953,13 +982,22 @@ async function loadNcOpts() {
   const cur = nc;
   const res = await ncFetch(`/api/create-options?machine=${encodeURIComponent(cur.machineId)}`);
   if (!res || nc !== cur) return;
-  if (res[0] !== 200) $('nc-err').textContent = res[1].error || `读取新建选项失败（${res[0]}）`;
-  const o = (cur.opts = res[0] === 200 ? res[1] : { home: '', recent: [], hosts: [] });
-  $('nc-recent').innerHTML = `<option value="">${o.recent.length ? '最近目录…' : '没有最近目录'}</option>`
+  if (res[0] !== 200) $('nc-err').textContent = apiError(res[1], res[0], 'nc.opts_failed');
+  cur.opts = res[0] === 200 ? res[1] : { home: '', recent: [], hosts: [] };
+  fillNcOpts();
+  ncChanged();
+}
+
+/** 最近目录与 SSH 主机下拉（切换语言时也重填，保留所选主机） */
+function fillNcOpts() {
+  const o = nc.opts;
+  if (!o) return;
+  const host = $('nc-host').value;
+  $('nc-recent').innerHTML = `<option value="">${esc(t(o.recent.length ? 'nc.recent' : 'nc.no_recent'))}</option>`
     + o.recent.map((r, i) => `<option value="${i}">${esc(r.kind === 'remote' ? `${r.host || r.hostId}：${r.cwd}` : r.cwd)}</option>`).join('');
   $('nc-host').innerHTML = o.hosts.map((h) => `<option value="${esc(h.id)}">${esc(h.name || h.id)}</option>`).join('')
-    || '<option value="">没有已配置的 SSH 主机</option>';
-  ncChanged();
+    || `<option value="">${esc(t('nc.no_hosts'))}</option>`;
+  if (host && o.hosts.some((h) => h.id === host)) $('nc-host').value = host;
 }
 
 /** 类型 / 目录 / 勾选变化：恢复对话时按当前目录拉取历史 */
@@ -976,13 +1014,13 @@ async function loadNcHist() {
   cur.hist = { cwd, items: null, err: '' };
   cur.pick = null;
   if (!cwd) {
-    cur.hist.err = '请先填写目录';
+    cur.hist.err = t('nc.need_dir');
     return;
   }
   const res = await ncFetch(`/api/claude-history?machine=${encodeURIComponent(cur.machineId)}&cwd=${encodeURIComponent(cwd)}`);
   if (!res || nc !== cur || cur.hist.cwd !== cwd) return;
   if (res[0] === 200) cur.hist.items = res[1].items || [];
-  else cur.hist.err = res[1].error || `读取 Claude 对话失败（${res[0]}）`;
+  else cur.hist.err = apiError(res[1], res[0], 'nc.hist_failed');
   renderNc();
 }
 
@@ -992,19 +1030,19 @@ function renderNc() {
   const o = nc.opts;
   $('nc-host-row').hidden = local;
   $('nc-resume-row').hidden = !local;
-  $('nc-cwd').placeholder = !local ? '留空 = 登录目录' : !o ? '加载中…' : o.home ? `留空 = 用户目录（${o.home}）` : '留空 = 用户目录';
+  $('nc-cwd').placeholder = !local ? t('nc.ph_remote') : !o ? t('common.loading') : o.home ? t('nc.ph_home', { home: o.home }) : t('nc.ph_home_plain');
   $('nc-ok').disabled = !!nc.busy;
-  $('nc-ok').textContent = nc.busy === 'create' ? '新建中…' : nc.busy === 'open' ? '正在打开…' : '新建';
+  $('nc-ok').textContent = t(nc.busy === 'create' ? 'nc.creating' : nc.busy === 'open' ? 'nc.opening' : 'nc.create');
   const box = $('nc-hist');
   box.hidden = !local || !$('nc-resume').checked;
   if (box.hidden) return;
   const h = nc.hist;
-  box.innerHTML = !h || (!h.items && !h.err) ? '<div class="empty">加载中…</div>'
+  box.innerHTML = !h || (!h.items && !h.err) ? `<div class="empty">${esc(t('common.loading'))}</div>`
     : h.err ? `<div class="err-tip">${esc(h.err)}</div>`
-    : !h.items.length ? `<div class="empty">该目录下没有 Claude 对话<br><span class="mono">${esc(h.cwd)}</span></div>`
+    : !h.items.length ? `<div class="empty">${esc(t('nc.no_hist'))}<br><span class="mono">${esc(h.cwd)}</span></div>`
     : h.items.map((it) => `<button type="button" class="nc-item${nc.pick === it.id ? ' on' : ''}" data-hid="${esc(it.id)}">
         <span class="nc-t" title="${esc(it.title || it.id)}">${esc(it.title || it.id)}</span>
-        <span class="nc-m"><span title="${esc(fullTime(it.mtime))}">${ago(it.mtime)}</span>${typeof it.messages === 'number' ? `<span>${it.messages} 条消息</span>` : ''}${it.open ? '<span class="tag t-warn">已打开</span>' : ''}</span></button>`).join('');
+        <span class="nc-m"><span title="${esc(fullTime(it.mtime))}">${esc(ago(it.mtime))}</span>${typeof it.messages === 'number' ? `<span>${esc(t('nc.messages', { n: it.messages }))}</span>` : ''}${it.open ? `<span class="tag t-warn">${esc(t('nc.opened'))}</span>` : ''}</span></button>`).join('');
 }
 
 async function submitNc() {
@@ -1015,11 +1053,11 @@ async function submitNc() {
   const cwd = $('nc-cwd').value.trim();
   const target = local ? { kind: 'local' } : { kind: 'remote', hostId: $('nc-host').value };
   if (cwd) target.cwd = cwd;
-  if (!local && !target.hostId) return err('请选择 SSH 主机');
+  if (!local && !target.hostId) return err(t('nc.pick_host'));
   const body = { target };
   if (local && $('nc-resume').checked) {
     const it = cur.hist && cur.hist.cwd === ncCwd() && cur.hist.items && cur.hist.items.find((x) => x.id === cur.pick);
-    if (!it) return err('请选择要恢复的 Claude 对话');
+    if (!it) return err(t('nc.pick_hist'));
     body.resume = { id: it.id, bypass: !!it.bypass, ...(typeof it.permissionMode === 'string' ? { permissionMode: it.permissionMode } : {}) };
   }
   // 不带 cols / rows：daemon 按 120×32 建，接管后终端按网页实际尺寸 resize
@@ -1032,7 +1070,7 @@ async function submitNc() {
   if (!res || nc !== cur) return;
   if (res[0] !== 200) {
     cur.busy = '';
-    err(res[1].error || `新建失败（${res[0]}）`);
+    err(apiError(res[1], res[0], 'nc.create_failed'));
     return renderNc();
   }
   // daemon 回复前已上报会话列表，等它经 SSE 到达后再接管
@@ -1044,7 +1082,7 @@ async function submitNc() {
   if (nc !== cur) return;
   if (!has()) {
     cur.busy = '';
-    err(`会话已新建（#${sid}），但尚未出现在会话列表中，请稍后在列表中接管`);
+    err(t('nc.not_listed', { id: sid }));
     return renderNc();
   }
   closeNc();
@@ -1094,19 +1132,28 @@ let auditPage = 0;
 async function loadAudit() {
   try {
     const r = await fetch('/api/audit?limit=500');
-    if (r.status === 401) return showLogin('登录已失效，请重新登录');
+    if (r.status === 401) return showLogin(t('common.session_expired'));
     if (!r.ok) return;
     auditRows = await r.json();
   } catch {
     return;
   }
+  fillAuditFilters();
+  renderAudit();
+}
+
+/** 事件 / 机器筛选下拉与条数（切换语言时也重填，保留所选项） */
+function fillAuditFilters() {
+  const ev = $('f-ev');
+  const curEv = ev.value;
+  ev.innerHTML = `<option value="">${esc(t('audit.all_events'))}</option>${Object.keys(EV).map((k) => `<option value="${k}">${k} · ${esc(t(`ev.${k}`))}</option>`).join('')}`;
+  ev.value = curEv;
   const sel = $('f-m');
   const cur = sel.value;
   const names = [...new Set(auditRows.map(aMachine))].sort();
-  sel.innerHTML = '<option value="">全部机器</option>' + names.map((n) => `<option>${esc(n)}</option>`).join('');
+  sel.innerHTML = `<option value="">${esc(t('audit.all_machines'))}</option>${names.map((n) => `<option>${esc(n)}</option>`).join('')}`;
   sel.value = names.includes(cur) ? cur : '';
-  $('a-count').textContent = `最近 ${auditRows.length} 条`;
-  renderAudit();
+  $('a-count').textContent = auditRows.length ? t('audit.recent', { n: auditRows.length }) : '';
 }
 
 function renderAudit() {
@@ -1118,32 +1165,38 @@ function renderAudit() {
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   auditPage = Math.min(auditPage, pages - 1);
   const shown = rows.slice(auditPage * PAGE, (auditPage + 1) * PAGE);
-  const tag = (e) => `<span class="tag ${EV[e] ? EV[e][1] : ''}"><span class="ev">${esc(e)}</span>${EV[e] ? EV[e][0] : ''}</span>`;
+  const tag = (e) => `<span class="tag ${isEv(e) ? EV[e] : ''}"><span class="ev">${esc(e)}</span>${isEv(e) ? esc(t(`ev.${e}`)) : ''}</span>`;
+  // 存储的是事件码与原始字段，按当前语言渲染；update_failed 的 reason 为 hub 记录的原文
+  const evDesc = (e) => (isEv(e) ? t(`evd.${e}`) : '');
+  const reason = (r) => (hasMsg(`reason.${r}`) ? t(`reason.${r}`) : r);
+  const withReason = (text, r) => (r ? t('common.detail', { text, detail: r }) : text);
+  const target = (s) => String(s).replace(/（恢复 Claude 对话 ([^）]*)）$/, (_, id) => t('audit.resume', { id }));
   const desc = (a) => esc(a.event === 'image' ? `${a.mime || ''} · ${Math.max(1, Math.round((a.bytes || 0) / 1024))} KB`
-    : a.to ? `${a.from} → ${a.to}${a.reason ? `：${a.reason}` : ''}`
-    : a.tokenName ? `${EV[a.event] ? EV[a.event][2] : ''}「${a.tokenName}」`
-    : a.target ? `${a.target}${a.reason ? `：${a.reason === 'not_found' ? 'SSH 主机不存在' : REASON[a.reason] || a.reason}` : ''}`
-    : a.reason ? REASON[a.reason] || a.reason : EV[a.event] ? EV[a.event][2] : '');
-  const sess = (a) => (a.sessionId === undefined ? '<span class="muted">—</span>' : `${esc(a.sessionName || '会话')} <span class="muted">#${a.sessionId}</span>`);
+    : a.to ? withReason(`${a.from} → ${a.to}`, a.reason)
+    : a.tokenName ? t('audit.token_desc', { desc: evDesc(a.event), name: a.tokenName })
+    : a.target ? withReason(target(a.target), a.reason && (a.reason === 'not_found' ? t('reason.ssh_host_missing') : reason(a.reason)))
+    : a.reason ? reason(a.reason) : evDesc(a.event));
+  const sessName = (a) => esc(a.sessionName || t('common.session'));
+  const sess = (a) => (a.sessionId === undefined ? '<span class="muted">—</span>' : `${sessName(a)} <span class="muted">#${a.sessionId}</span>`);
   const time = (a) => fullTime(Date.parse(a.time));
   $('a-body').innerHTML = shown.map((a) => `<tr><td class="tm">${esc(time(a))}</td><td>${tag(a.event)}</td>
     <td>${esc(aMachine(a))}</td><td>${sess(a)}</td>
     <td class="mono scmd">${esc(a.ip || '—')}</td><td class="muted">${desc(a)}</td></tr>`).join('')
-    || `<tr><td colspan="6" class="empty">${auditRows.length ? '没有符合条件的记录' : '暂无接管记录'}</td></tr>`;
+    || `<tr><td colspan="6" class="empty">${esc(t(auditRows.length ? 'audit.no_match' : 'audit.empty'))}</td></tr>`;
   $('a-list').innerHTML = shown.map((a) => `<div class="arow"><div class="a1">${tag(a.event)}<span class="tm">${esc(time(a))}</span></div>
-    <div class="a2">${esc(aMachine(a))}${a.sessionId === undefined ? '' : ` · ${esc(a.sessionName || '会话')} #${a.sessionId}`}<span class="mono">${esc(a.ip || '')}</span></div>
+    <div class="a2">${esc(aMachine(a))}${a.sessionId === undefined ? '' : ` · ${sessName(a)} #${a.sessionId}`}<span class="mono">${esc(a.ip || '')}</span></div>
     <div class="a3">${desc(a)}</div></div>`).join('')
-    || `<div class="empty">${auditRows.length ? '没有符合条件的记录' : '暂无接管记录'}</div>`;
-  $('a-total').textContent = `共 ${rows.length} 条`;
+    || `<div class="empty">${esc(t(auditRows.length ? 'audit.no_match' : 'audit.empty'))}</div>`;
+  $('a-total').textContent = t('audit.total', { n: rows.length });
   // 页码最多显示 5 个，以当前页为中心
   const from = Math.max(0, Math.min(auditPage - 2, pages - 5));
   const nums = [];
   for (let i = from; i < Math.min(pages, from + 5); i++) nums.push(`<button data-page="${i}" class="${i === auditPage ? 'on' : ''}">${i + 1}</button>`);
-  $('a-pages').innerHTML = `<button data-page="${auditPage - 1}" aria-label="上一页"${auditPage ? '' : ' disabled'}>${ic('chevL')}</button>${nums.join('')}`
-    + `<button data-page="${auditPage + 1}" aria-label="下一页"${auditPage < pages - 1 ? '' : ' disabled'}>${ic('chevR')}</button>`;
+  $('a-pages').innerHTML = `<button data-page="${auditPage - 1}" aria-label="${esc(t('audit.prev'))}"${auditPage ? '' : ' disabled'}>${ic('chevL')}</button>${nums.join('')}`
+    + `<button data-page="${auditPage + 1}" aria-label="${esc(t('audit.next'))}"${auditPage < pages - 1 ? '' : ' disabled'}>${ic('chevR')}</button>`;
 }
 
-$('f-ev').innerHTML += Object.entries(EV).map(([k, v]) => `<option value="${k}">${k} · ${v[0]}</option>`).join('');
+fillAuditFilters();
 const refilter = () => { auditPage = 0; renderAudit(); };
 $('f-ev').addEventListener('change', refilter);
 $('f-m').addEventListener('change', refilter);
@@ -1185,9 +1238,9 @@ function renderUpdate() {
   const b = $('upd-btn');
   b.hidden = false;
   b.classList.toggle('new', newer || st === 'updating' || st === 'done');
-  const lbl = st === 'updating' ? '正在更新…' : st === 'done' ? '正在重启…' : newer ? `有新版本 ${upd.latest}` : `v${upd.current}`;
+  const lbl = st === 'updating' ? t('upd.updating') : st === 'done' ? t('upd.restarting') : newer ? t('upd.new_version', { v: upd.latest }) : `v${upd.current}`;
   b.innerHTML = `${ic('up')}<span class="lbl">${esc(lbl)}</span>`;
-  b.title = newer ? `有新版本 ${upd.latest}，点击查看` : `当前版本 v${upd.current}，点击检查更新`;
+  b.title = newer ? t('upd.new_title', { v: upd.latest }) : t('upd.cur_title', { v: upd.current });
   if (st === 'done') {
     $('upd').hidden = false;
     watchRestart();
@@ -1196,29 +1249,32 @@ function renderUpdate() {
 
   const busy = st === 'checking' || st === 'updating';
   const tag = {
-    checking: '<span class="tag"><i class="dot info"></i>正在检查…</span>',
-    updating: '<span class="tag t-pri"><i class="dot info"></i>正在更新…</span>',
-    done: '<span class="tag t-pri"><i class="dot ok"></i>更新完成</span>',
-    failed: '<span class="tag t-err">更新失败</span>',
-  }[st] || (newer ? '<span class="tag t-pri"><i class="dot ok"></i>有新版本</span>' : upd.latest ? '<span class="tag">已是最新版本</span>' : '');
+    checking: () => `<span class="tag"><i class="dot info"></i>${esc(t('upd.checking'))}</span>`,
+    updating: () => `<span class="tag t-pri"><i class="dot info"></i>${esc(t('upd.updating'))}</span>`,
+    done: () => `<span class="tag t-pri"><i class="dot ok"></i>${esc(t('upd.done'))}</span>`,
+    failed: () => `<span class="tag t-err">${esc(t('upd.failed'))}</span>`,
+  }[st]?.() || (newer ? `<span class="tag t-pri"><i class="dot ok"></i>${esc(t('upd.has_new'))}</span>` : upd.latest ? `<span class="tag">${esc(t('upd.up_to_date'))}</span>` : '');
+  // 服务端附错误码时按语言显示，否则显示原文
+  const error = upd.errorCode && hasMsg(`upd.err.${upd.errorCode}`) ? t(`upd.err.${upd.errorCode}`, upd.errorParams || {}) : upd.error;
+  const notes = newer ? pickNotes(upd.notes, LOCALE) : '';
   const url = /^https?:\/\//.test(upd.url || '') ? upd.url : '';
   const late = restartAt && Date.now() - restartAt > RESTART_HINT_MS;
   const checked = upd.checkedAt ? Date.parse(upd.checkedAt) : 0;
   $('upd-body').innerHTML = `
     <div class="desc">
-      <div class="di"><div class="dl">当前版本</div><div class="dv">v${esc(upd.current)}</div></div>
-      <div class="di"><div class="dl">最新版本</div><div class="dv">${upd.latest ? esc(upd.latest) : '—'}</div></div>
-      <div class="di"><div class="dl">上次检查</div><div class="dv" title="${esc(fullTime(checked))}">${ago(checked)}</div></div>
+      <div class="di"><div class="dl">${esc(t('upd.current'))}</div><div class="dv">v${esc(upd.current)}</div></div>
+      <div class="di"><div class="dl">${esc(t('upd.latest'))}</div><div class="dv">${upd.latest ? esc(upd.latest) : '—'}</div></div>
+      <div class="di"><div class="dl">${esc(t('upd.last_check'))}</div><div class="dv" title="${esc(fullTime(checked))}">${esc(ago(checked))}</div></div>
     </div>
-    <div class="upd-st">${tag}${url && upd.latest ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">发布页${ic('chevR', 'ic-sm')}</a>` : ''}</div>
-    ${upd.error ? `<div class="banner">${ic('alertC')}<div><span class="bd">${esc(upd.error)}</span></div></div>` : ''}
-    ${st === 'done' ? `<div class="banner def">${ic('info')}<div><span class="bt">${late ? 'hub 长时间未恢复' : '更新完成，正在重启…'}</span>
-      <span class="bd">${late ? '请到服务器上检查 hub 是否在运行：安装版查看服务 tether-hub 及 %ProgramData%\\tether-hub\\logs；源码部署需配置 systemd / pm2 / NSSM 等进程管理器。' : 'hub 恢复后页面将自动刷新，需重新登录。'}</span></div></div>` : ''}
-    ${newer && upd.notes ? `<div class="upd-sec">更新说明</div><div class="upd-notes">${esc(upd.notes)}</div>` : ''}
-    ${upd.log ? `<div class="upd-sec">更新日志</div><pre class="upd-log" id="upd-log">${esc(upd.log)}</pre>` : ''}
+    <div class="upd-st">${tag}${url && upd.latest ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(t('upd.release_page'))}${ic('chevR', 'ic-sm')}</a>` : ''}</div>
+    ${error ? `<div class="banner">${ic('alertC')}<div><span class="bd">${esc(error)}</span></div></div>` : ''}
+    ${st === 'done' ? `<div class="banner def">${ic('info')}<div><span class="bt">${esc(t(late ? 'upd.late_title' : 'upd.restart_title'))}</span>
+      <span class="bd">${esc(t(late ? 'upd.late_desc' : 'upd.restart_desc'))}</span></div></div>` : ''}
+    ${notes ? `<div class="upd-sec">${esc(t('upd.notes'))}</div><div class="upd-notes">${esc(notes)}</div>` : ''}
+    ${upd.log ? `<div class="upd-sec">${esc(t('upd.log'))}</div><pre class="upd-log" id="upd-log">${esc(upd.log)}</pre>` : ''}
     ${st === 'done' ? '' : `<div class="upd-acts">
-      <button class="btn" data-upd="check"${busy ? ' disabled' : ''}>${ic('reset')}检查更新</button>
-      ${newer ? `<button class="btn btn-primary" data-upd="apply"${busy ? ' disabled' : ''}>${st === 'failed' ? '重试更新' : '立即更新'}</button>` : ''}
+      <button class="btn" data-upd="check"${busy ? ' disabled' : ''}>${ic('reset')}${esc(t('upd.check'))}</button>
+      ${newer ? `<button class="btn btn-primary" data-upd="apply"${busy ? ' disabled' : ''}>${esc(t(st === 'failed' ? 'upd.retry' : 'upd.apply'))}</button>` : ''}
     </div>`}`;
   const log = $('upd-log');
   if (log) log.scrollTop = log.scrollHeight;
@@ -1248,17 +1304,16 @@ async function updAction(kind) {
     try {
       n = (await (await fetch('/api/update')).json()).takeovers || 0;
     } catch {}
-    const msg = n ? `当前有 ${n} 个会话正在被远程接管，更新完成后 hub 会重启，接管将中断。\n\n确定更新到 ${upd.latest}？`
-      : `将更新到 ${upd.latest}，完成后 hub 会自动重启。确定继续？`;
+    const msg = n ? t('upd.confirm_takeovers', { n, v: upd.latest }) : t('upd.confirm', { v: upd.latest });
     if (!confirm(msg)) return;
   }
   try {
     const r = await fetch(`/api/update/${kind}`, { method: 'POST' });
-    if (r.status === 401) return showLogin('登录已失效，请重新登录');
+    if (r.status === 401) return showLogin(t('common.session_expired'));
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) alert(body.error || `操作失败（${r.status}）`);
+    if (!r.ok) alert(apiError(body, r.status, 'upd.op_failed'));
   } catch {
-    alert('无法连接服务器');
+    alert(t('common.no_server'));
   }
 }
 
@@ -1289,10 +1344,10 @@ async function tokApi(url, body) {
   try {
     const r = await fetch(url, body === undefined ? undefined
       : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (r.status === 401) return showLogin('登录已失效，请重新登录');
+    if (r.status === 401) return showLogin(t('common.session_expired'));
     return [r.status, await r.json().catch(() => ({}))];
   } catch {
-    return [0, { error: '无法连接服务器' }];
+    return [0, { error: t('common.no_server') }];
   }
 }
 
@@ -1300,30 +1355,30 @@ async function loadTokens() {
   const res = await tokApi('/api/tokens');
   if (!res) return;
   if (res[0] === 200) tokRows = res[1];
-  else $('tok-err').textContent = res[1].error || `加载失败（${res[0]}）`;
+  else $('tok-err').textContent = apiError(res[1], res[0], 'tok.load_failed');
   renderTokens();
 }
 
 function renderTokens() {
   $('tok-new').innerHTML = tokNew ? `<div class="banner def">${ic('info')}<div>
-      <span class="bt">已签发「${esc(tokNew.name)}」</span> <span class="bd">明文只显示这一次，关闭面板后无法再次查看，请立即复制到 Tether 客户端。</span>
-      <div class="tok-copy"><input class="input mono" id="tok-plain" readonly value="${esc(tokNew.token)}" aria-label="token 明文"><button class="btn btn-sm btn-primary" data-tok-copy>复制</button></div>
+      <span class="bt">${esc(t('tok.issued', { name: tokNew.name }))}</span> <span class="bd">${esc(t('tok.once'))}</span>
+      <div class="tok-copy"><input class="input mono" id="tok-plain" readonly value="${esc(tokNew.token)}" aria-label="${esc(t('tok.plain_aria'))}"><button class="btn btn-sm btn-primary" data-tok-copy>${esc(t('tok.copy'))}</button></div>
       <div class="tok-tip" id="tok-tip"></div></div></div>` : '';
-  const acts = (t) => (t.revoked ? '' : tokAsk === t.name
-    ? `<div class="tok-acts"><button class="btn btn-sm" data-tok-cancel>取消</button><button class="btn btn-sm btn-primary" data-tok-revoke="${esc(t.name)}">确认吊销</button></div>`
-    : `<div class="tok-acts"><button class="btn btn-sm" data-tok-ask="${esc(t.name)}">吊销</button></div>`);
-  $('tok-list').innerHTML = (tokRows || []).map((t) => `<div class="tok-row${t.revoked ? ' off' : ''}">
-      <div class="tok-main"><div class="tok-r1"><span class="mono tok-n">${esc(t.name)}</span>${t.revoked ? '<span class="tag">已吊销</span>' : '<span class="tag t-pri"><i class="dot ok"></i>有效</span>'}</div>
-      <div class="tok-r2"><span title="${esc(fullTime(t.createdAt))}">创建于 ${shortTime(t.createdAt)}</span><span>${t.machines.length ? `机器：${esc(t.machines.join('、'))}` : '暂无机器使用'}</span></div>
-      ${tokAsk === t.name ? '<div class="tok-ask">吊销后，使用它的机器约 1 秒内断开，且无法恢复。</div>' : ''}</div>
-      ${acts(t)}</div>`).join('') || `<div class="empty">${tokRows ? '还没有 token，在上方输入名称签发' : '加载中…'}</div>`;
+  const acts = (tk) => (tk.revoked ? '' : tokAsk === tk.name
+    ? `<div class="tok-acts"><button class="btn btn-sm" data-tok-cancel>${esc(t('common.cancel'))}</button><button class="btn btn-sm btn-primary" data-tok-revoke="${esc(tk.name)}">${esc(t('tok.revoke_ok'))}</button></div>`
+    : `<div class="tok-acts"><button class="btn btn-sm" data-tok-ask="${esc(tk.name)}">${esc(t('tok.revoke'))}</button></div>`);
+  $('tok-list').innerHTML = (tokRows || []).map((tk) => `<div class="tok-row${tk.revoked ? ' off' : ''}">
+      <div class="tok-main"><div class="tok-r1"><span class="mono tok-n">${esc(tk.name)}</span>${tk.revoked ? `<span class="tag">${esc(t('tok.revoked'))}</span>` : `<span class="tag t-pri"><i class="dot ok"></i>${esc(t('tok.valid'))}</span>`}</div>
+      <div class="tok-r2"><span title="${esc(fullTime(tk.createdAt))}">${esc(t('tok.created', { time: shortTime(tk.createdAt) }))}</span><span>${esc(tk.machines.length ? t('tok.machines', { list: tk.machines.join(t('common.list_sep')) }) : t('tok.no_machines'))}</span></div>
+      ${tokAsk === tk.name ? `<div class="tok-ask">${esc(t('tok.revoke_warn'))}</div>` : ''}</div>
+      ${acts(tk)}</div>`).join('') || `<div class="empty">${esc(t(tokRows ? 'tok.empty' : 'common.loading'))}</div>`;
 }
 
 async function revokeTok(name) {
   const res = await tokApi(`/api/tokens/${encodeURIComponent(name)}/revoke`, {});
   if (!res) return;
   tokAsk = null;
-  if (res[0] !== 200) $('tok-err').textContent = res[1].error || `吊销失败（${res[0]}）`;
+  if (res[0] !== 200) $('tok-err').textContent = apiError(res[1], res[0], 'tok.revoke_failed');
   loadTokens();
 }
 
@@ -1339,7 +1394,7 @@ async function copyTok() {
     box.setSelectionRange(0, box.value.length);
     try { ok = document.execCommand('copy'); } catch {}
   }
-  $('tok-tip').textContent = ok ? '已复制到剪贴板' : '无法自动复制，已选中文本，请手动复制（Ctrl+C / 长按）';
+  $('tok-tip').textContent = ok ? t('tok.copied') : t('tok.copy_failed');
 }
 
 function closeTok() {
@@ -1361,7 +1416,7 @@ $('tok-form').addEventListener('submit', async (e) => {
   $('tok-err').textContent = '';
   const res = await tokApi('/api/tokens', { name: $('tok-name').value.trim() });
   if (!res) return;
-  if (res[0] !== 201) return ($('tok-err').textContent = res[1].error || `签发失败（${res[0]}）`);
+  if (res[0] !== 201) return ($('tok-err').textContent = apiError(res[1], res[0], 'tok.issue_failed'));
   tokNew = res[1];
   tokAsk = null;
   $('tok-name').value = '';
@@ -1420,11 +1475,11 @@ $('login-form').addEventListener('submit', async (e) => {
       body: JSON.stringify({ password: $('password').value }),
     });
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) return showLogin(body.error || `登录失败（${r.status}）`);
+    if (!r.ok) return showLogin(apiError(body, r.status, 'login.failed'));
     $('password').value = '';
     showMain();
   } catch {
-    showLogin('无法连接服务器');
+    showLogin(t('common.no_server'));
   }
 });
 
@@ -1438,6 +1493,23 @@ $('logout').addEventListener('click', async () => {
 // 相对时间每 30 s 刷新一次
 setInterval(() => state && authed && render(), 30_000);
 
+/** 切换语言：重新翻译静态文字，重绘各动态区域（已显示的一次性提示 / 错误保持原文，下次操作即用新语言） */
+function relocalize() {
+  applyLocale();
+  setSse(sseKind);
+  render();
+  renderUpdate();
+  fillAuditFilters();
+  renderAudit();
+  renderTokens();
+  if (nc) {
+    $('nc-sub').textContent = t('nc.machine', { name: mName(machines().find((x) => x.machineId === nc.machineId) || { machineId: nc.machineId }) });
+    fillNcOpts();
+    renderNc();
+  }
+  if (term && termKind) setTermState(termKind, termReason);
+}
+
 fetch('/api/me')
   .then((r) => (r.ok ? showMain() : showLogin()))
-  .catch(() => showLogin('无法连接服务器'));
+  .catch(() => showLogin(t('common.no_server')));
